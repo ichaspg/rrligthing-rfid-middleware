@@ -93,7 +93,7 @@ Set `ReaderMode` to `Vendor` and select `NativeMock`, `Tcp`, or `Serial` under `
 The development control socket is under `/tmp` because Unix sockets cannot be created on a Windows-mounted WSL path. The production unit uses `/run/rfid-middleware/control.sock` with restricted permissions.
 
 The mock backend supports manifest activation and fault injection. See `fixtures/README.md` and `fixtures/scenarios.json` for deterministic payloads, fault names, and the 100,000-EPC reset command.
-Both persistence layers use PostgreSQL. `rfid_edge` is private to the middleware and stores its cached manifest plus local-only scan audit. `rfid_backend` stores server manifests and revocation audit. Only manifest requests are sent from middleware to server; EPC scan observations are not uploaded. See `docs/FULL-WSL-HARDWARE-TEST-HANDBOOK.md` for the complete setup and real-reader test.
+Both persistence layers use PostgreSQL. `rfid_edge` is private to the middleware and stores its cached manifest plus local-only scan audit. `rfid_backend` stores server manifests and revocation audit. Only manifest requests are sent from middleware to server; EPC scan observations are not uploaded.
 
 ## Real hardware quick reference
 
@@ -108,8 +108,6 @@ The real test tags are:
 
 - `E280689400004010BF743D5C`
 - `E2806915000060068C95C54B`
-
-See the [full WSL and hardware test handbook](docs/FULL-WSL-HARDWARE-TEST-HANDBOOK.md) before operating the reader.
 
 ## CLI
 
@@ -182,7 +180,6 @@ tests/                              Unit, integration, E2E, native and packaging
 fixtures/                           Deterministic manifests and scenarios
 linux/x86_64/release                Vendor Linux x86-64 SDK files
 packaging/                          DEB and systemd configuration
-docs/                               Operational testing handbook
 ```
 
 ## Production notes
