@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+systemctl stop rfid-middleware.service 2>/dev/null || true
+

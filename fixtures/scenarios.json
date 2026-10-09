@@ -1,0 +1,23 @@
+{
+  "manifestScenarios": {
+    "baseline": { "faultProfile": "none", "version": 17, "count": 100 },
+    "stagedActivation": { "manifestId": "TR-2026-00129", "version": 18, "count": 100, "expiresMinutes": 30 },
+    "empty": { "faultProfile": "empty" },
+    "expired": { "faultProfile": "expired" },
+    "malformed": { "faultProfile": "malformed" },
+    "wrongCount": { "faultProfile": "wrong-count" },
+    "duplicateEpc": { "faultProfile": "duplicate-epc" },
+    "invalidChecksum": { "faultProfile": "invalid-checksum" },
+    "performance": { "resetSeedCount": 100000 }
+  },
+  "readScenarios": {
+    "authorized": "E28011700000000000000001",
+    "unauthorized": "E2801170FFFFFFFFFFFFFFFF",
+    "invalid": ["", "ABC", "NOT-HEX"],
+    "normalization": [" e28011700000000000000001 ", "e28011700000000000000001"],
+    "rapidDuplicateWindowMilliseconds": 2000,
+    "antennas": [1, 2, 3, 4],
+    "load": { "readsPerSecond": 1000, "authorizedRatio": 0.95, "seed": 1729 }
+  },
+  "eventStates": ["PENDING", "RETRY", "ACKNOWLEDGED", "REJECTED", "DEAD_LETTER"]
+}

@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/RfidMiddleware.Core/RfidMiddleware.Core.csproj" />
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+</Project>

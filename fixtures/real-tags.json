@@ -1,0 +1,16 @@
+{
+  "manifestId": "REAL-TAGS-2026-001",
+  "transportId": "HARDWARE-COM4",
+  "version": 18,
+  "expiresMinutes": 1440,
+  "items": [
+    {
+      "inventoryId": "REAL-001",
+      "epc": "E280689400004010BF743D5C"
+    },
+    {
+      "inventoryId": "REAL-002",
+      "epc": "E2806915000060068C95C54B"
+    }
+  ]
+}

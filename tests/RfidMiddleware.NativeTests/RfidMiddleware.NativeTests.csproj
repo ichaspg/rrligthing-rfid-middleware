@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/RfidMiddleware.Reader.Vendor/RfidMiddleware.Reader.Vendor.csproj" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Content Include="../../linux/x86_64/release/librfid.so" Link="native/librfid.so" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../linux/x86_64/release/librfid_core.so" Link="native/librfid_core.so" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

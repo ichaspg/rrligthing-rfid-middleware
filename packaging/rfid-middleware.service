@@ -1,0 +1,30 @@
+[Unit]
+Description=RFID Transport Validation Middleware
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=rfid-middleware
+Group=rfid-middleware
+SupplementaryGroups=dialout
+WorkingDirectory=/var/lib/rfid-middleware
+EnvironmentFile=-/etc/rfid-middleware/environment
+ExecStart=/usr/lib/rfid-middleware/rfid-middleware run --config /etc/rfid-middleware/appsettings.json
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/rfid-middleware /run/rfid-middleware
+RuntimeDirectory=rfid-middleware
+RuntimeDirectoryMode=0750
+UMask=0027
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

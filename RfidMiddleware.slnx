@@ -1,0 +1,15 @@
+<Solution>
+  <Project Path="src/RfidMiddleware.Core/RfidMiddleware.Core.csproj" />
+  <Project Path="src/RfidMiddleware.Reader/RfidMiddleware.Reader.csproj" />
+  <Project Path="src/RfidMiddleware.Reader.Vendor/RfidMiddleware.Reader.Vendor.csproj" />
+  <Project Path="src/RfidMiddleware.Persistence/RfidMiddleware.Persistence.csproj" />
+  <Project Path="src/RfidMiddleware.Server/RfidMiddleware.Server.csproj" />
+  <Project Path="src/RfidMiddleware.Host/RfidMiddleware.Host.csproj" />
+  <Project Path="tools/RfidMiddleware.MockServer/RfidMiddleware.MockServer.csproj" />
+  <Project Path="tests/RfidMiddleware.Tests/RfidMiddleware.Tests.csproj" />
+  <Project Path="tests/RfidMiddleware.IntegrationTests/RfidMiddleware.IntegrationTests.csproj" />
+  <Project Path="tests/RfidMiddleware.EndToEndTests/RfidMiddleware.EndToEndTests.csproj" />
+  <Project Path="tests/RfidMiddleware.NativeTests/RfidMiddleware.NativeTests.csproj" />
+  <Project Path="tests/RfidMiddleware.LoadTests/RfidMiddleware.LoadTests.csproj" />
+  <Project Path="tests/RfidMiddleware.PackagingTests/RfidMiddleware.PackagingTests.csproj" />
+</Solution>

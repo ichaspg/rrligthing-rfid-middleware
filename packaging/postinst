@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+if ! getent group rfid-middleware >/dev/null; then groupadd --system rfid-middleware; fi
+if ! id rfid-middleware >/dev/null 2>&1; then useradd --system --gid rfid-middleware --home /var/lib/rfid-middleware --shell /usr/sbin/nologin rfid-middleware; fi
+install -d -o rfid-middleware -g rfid-middleware -m 0750 /var/lib/rfid-middleware /run/rfid-middleware
+systemctl daemon-reload || true
+

@@ -1,0 +1,22 @@
+{
+  "middlewareId": "WH-A-GATE-01",
+  "readerId": "READER-01",
+  "manifestId": "TR-2026-00128",
+  "version": 17,
+  "authorizedEpc": "E28011700000000000000001",
+  "unauthorizedEpc": "E2801170FFFFFFFFFFFFFFFF",
+  "invalidEpcs": ["", "ABC", "NOT-HEX"],
+  "scenarios": [
+    "active",
+    "staged-update",
+    "empty",
+    "expired",
+    "malformed",
+    "wrong-count",
+    "duplicate-epc",
+    "invalid-checksum",
+    "rapid-duplicates",
+    "multiple-antennas"
+  ]
+}
+
