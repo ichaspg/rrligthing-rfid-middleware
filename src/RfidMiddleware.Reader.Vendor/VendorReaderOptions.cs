@@ -13,7 +13,6 @@ public sealed class VendorReaderOptions
     public int Rs485Address { get; set; }
     public int TimeoutMilliseconds { get; set; } = 6000;
     public int MockPort { get; set; } = 26790;
-    public int RelayNumber { get; set; } = 1;
     public int AlarmPulseMilliseconds { get; set; } = 1000;
 }
 

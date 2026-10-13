@@ -59,7 +59,7 @@ public sealed class ReaderPipelineWorker(
         catch (Exception ex)
         {
             logger.LogCritical(ex, "Reader pipeline failed");
-            await SafeSystemAlarmAsync(stoppingToken);
+            state.LastSystemError = ex.Message;
             throw;
         }
         finally
@@ -94,7 +94,7 @@ public sealed class ReaderPipelineWorker(
             state.RecordRead(read);
             if (_channel.Writer.TryWrite(read)) return true;
             state.RecordDrop();
-            _ = Task.Run(() => SafeSystemAlarmAsync(CancellationToken.None));
+            state.LastSystemError = "Raw read channel overflowed.";
             return false;
         }
     }
@@ -126,7 +126,7 @@ public sealed class ReaderPipelineWorker(
         catch (Exception ex)
         {
             logger.LogCritical(ex, "Failed to persist RFID event batch of {Count}", batch.Count);
-            await SafeSystemAlarmAsync(token);
+            state.LastSystemError = ex.Message;
             throw;
         }
     }
@@ -137,7 +137,7 @@ public sealed class ReaderPipelineWorker(
         {
             if (_eventChannel.Writer.TryWrite(scanEvent)) continue;
             state.RecordDrop();
-            await SafeSystemAlarmAsync(token);
+            state.LastSystemError = "Durable event channel overflowed.";
             throw new InvalidOperationException("Durable event channel overflowed.");
         }
     }
@@ -165,9 +165,4 @@ public sealed class ReaderPipelineWorker(
         return true;
     }
 
-    private async Task SafeSystemAlarmAsync(CancellationToken token)
-    {
-        try { await alarm.SignalSystemFaultAsync(token); }
-        catch (Exception ex) { logger.LogError(ex, "System alarm output failed"); }
-    }
 }

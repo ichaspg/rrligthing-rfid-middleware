@@ -7,7 +7,9 @@ public interface IManifestRepository
 {
     Task InitializeAsync(CancellationToken cancellationToken = default);
     Task<ManifestSnapshot?> GetActiveAsync(CancellationToken cancellationToken = default);
+    Task<AuthorizationStateSnapshot> GetAuthorizationStateAsync(CancellationToken cancellationToken = default);
     Task StageAndActivateAsync(ManifestDocument manifest, CancellationToken cancellationToken = default);
+    Task DeactivateAsync(ManifestCompletion completion, CancellationToken cancellationToken = default);
 }
 
 public interface IEventRepository
@@ -23,9 +25,8 @@ public interface IManifestClient
     Task<ManifestFetchResult> GetCurrentAsync(string? etag, CancellationToken cancellationToken = default);
 }
 
-public sealed record ManifestFetchResult(bool Changed, ManifestDocument? Manifest, string? ETag);
-
-public interface IEventUploader
-{
-    Task<IReadOnlyList<EventUploadResult>> UploadAsync(IReadOnlyList<ScanEvent> events, CancellationToken cancellationToken = default);
-}
+public sealed record ManifestFetchResult(
+    ManifestFetchDirective Directive,
+    ManifestDocument? Manifest,
+    ManifestCompletion? Completion,
+    string? ETag);

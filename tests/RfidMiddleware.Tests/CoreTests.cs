@@ -68,6 +68,21 @@ public sealed class CoreTests
         Assert.Equal(ValidationOutcome.NoActiveManifest, engine.ValidateForVersion(first.Items[0].Epc, now.AddSeconds(2), null).Outcome);
     }
 
+    [Fact]
+    public void CompletedManifestClearsCurrentAuthorizationButKeepsVersionedAuditSnapshot()
+    {
+        var now = DateTimeOffset.Parse("2026-10-06T00:00:00Z");
+        var document = Document(now.AddMinutes(30));
+        var engine = new ValidationEngine();
+        engine.Activate(ManifestSnapshot.Create(document, now));
+
+        engine.Deactivate();
+
+        Assert.Equal(ValidationOutcome.NoActiveManifest, engine.Validate(document.Items[0].Epc, now).Outcome);
+        Assert.Equal(ValidationOutcome.Authorized,
+            engine.ValidateForVersion(document.Items[0].Epc, now, document.Version).Outcome);
+    }
+
     internal static ManifestDocument Document(DateTimeOffset expires, int count = 1)
     {
         var items = Enumerable.Range(1, count).Select(i => new ManifestItem($"INV{i}", $"E2801170{i:X16}")).ToArray();

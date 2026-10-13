@@ -5,6 +5,7 @@ namespace RfidMiddleware.Reader.Vendor;
 
 public sealed class VendorAlarmController(VendorReaderAdapter reader, IClock clock, VendorReaderOptions options) : IAlarmController, IAsyncDisposable
 {
+    private const int AlarmDigitalOutput = 0;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private CancellationTokenSource? _pulseCancellation;
     private Task _pulseTask = Task.CompletedTask;
@@ -13,32 +14,14 @@ public sealed class VendorAlarmController(VendorReaderAdapter reader, IClock clo
 
     public ValueTask SignalUnauthorizedAsync(CancellationToken cancellationToken = default) => PulseAsync(cancellationToken);
 
-    public async ValueTask SignalSystemFaultAsync(CancellationToken cancellationToken = default)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            CancelPulse();
-            EnsureSuccess(NativeMethods.SetRelayStatus(reader.Handle, options.RelayNumber, NativeRelayStatus.Open), "relay on");
-            EnsureSuccess(NativeMethods.SetBuzz(reader.Handle, 0), "buzzer on");
-            Volatile.Write(ref _health, new(false, true, "System fault", clock.UtcNow));
-        }
-        catch (Exception ex)
-        {
-            Volatile.Write(ref _health, new(false, true, ex.Message, clock.UtcNow));
-            throw;
-        }
-        finally { _gate.Release(); }
-    }
-
     public async ValueTask ResetAsync(CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             CancelPulse();
-            EnsureSuccess(NativeMethods.SetBuzz(reader.Handle, 1), "buzzer off");
-            EnsureSuccess(NativeMethods.SetRelayStatus(reader.Handle, options.RelayNumber, NativeRelayStatus.Closed), "relay off");
+            EnsureSuccess(NativeMethods.SetRelayStatus(reader.Handle, AlarmDigitalOutput, NativeRelayStatus.Closed),
+                "digital output 0 off");
             Volatile.Write(ref _health, new(true, false, null, clock.UtcNow));
         }
         finally { _gate.Release(); }
@@ -50,8 +33,8 @@ public sealed class VendorAlarmController(VendorReaderAdapter reader, IClock clo
         try
         {
             CancelPulse();
-            EnsureSuccess(NativeMethods.SetRelayStatus(reader.Handle, options.RelayNumber, NativeRelayStatus.Open), "relay on");
-            EnsureSuccess(NativeMethods.SetBuzz(reader.Handle, 0), "buzzer on");
+            EnsureSuccess(NativeMethods.SetRelayStatus(reader.Handle, AlarmDigitalOutput, NativeRelayStatus.Open),
+                "digital output 0 on");
             Volatile.Write(ref _health, new(true, true, null, clock.UtcNow));
             var pulse = new CancellationTokenSource();
             _pulseCancellation = pulse;
@@ -77,8 +60,8 @@ public sealed class VendorAlarmController(VendorReaderAdapter reader, IClock clo
             try
             {
                 if (!ReferenceEquals(_pulseCancellation, pulse)) return;
-                EnsureSuccess(NativeMethods.SetBuzz(reader.Handle, 1), "buzzer off");
-                EnsureSuccess(NativeMethods.SetRelayStatus(reader.Handle, options.RelayNumber, NativeRelayStatus.Closed), "relay off");
+                EnsureSuccess(NativeMethods.SetRelayStatus(reader.Handle, AlarmDigitalOutput, NativeRelayStatus.Closed),
+                    "digital output 0 off");
                 Volatile.Write(ref _health, new(true, false, null, clock.UtcNow));
                 _pulseCancellation = null;
             }

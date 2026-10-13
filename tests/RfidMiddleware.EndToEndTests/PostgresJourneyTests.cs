@@ -1,6 +1,7 @@
 using Npgsql;
 using RfidMiddleware.Core;
 using RfidMiddleware.Persistence;
+using RfidMiddleware.MockServer;
 using Xunit;
 
 namespace RfidMiddleware.EndToEndTests;
@@ -40,6 +41,68 @@ public sealed class PostgresJourneyTests
             Assert.Equal(ValidationOutcome.Authorized, decision.Outcome);
             Assert.Equal(1, stats.Total);
             Assert.Equal("ok", await store.VerifyAsync());
+        }
+        finally
+        {
+            await using var drop = admin.CreateCommand();
+            drop.CommandText = $"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE;";
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
+    public async Task MobileAuthorizationJourneyIsVersionedIdempotentAndCompletable()
+    {
+        var baseConnection = Environment.GetEnvironmentVariable("RFID_TEST_POSTGRES");
+        if (string.IsNullOrWhiteSpace(baseConnection)) return;
+        var schema = $"mobile_{Guid.NewGuid():N}";
+        await using var admin = new NpgsqlConnection(baseConnection);
+        await admin.OpenAsync();
+        await using (var create = admin.CreateCommand())
+        {
+            create.CommandText = $"CREATE SCHEMA \"{schema}\";";
+            await create.ExecuteNonQueryAsync();
+        }
+        var builder = new NpgsqlConnectionStringBuilder(baseConnection) { SearchPath = schema };
+        var database = new PostgresMockDatabase(builder.ConnectionString);
+        try
+        {
+            await database.InitializeAsync();
+            await database.ResetAndSeedAsync(2);
+            Assert.True(await database.IsAuthorizedAsync("WH-A-GATE-01", "dev-token", ApiRole.Middleware, default));
+            Assert.False(await database.IsAuthorizedAsync("WH-A-GATE-01", "dev-token", ApiRole.Mobile, default));
+            Assert.True(await database.IsAuthorizedAsync("WH-A-GATE-01", "dev-mobile-token", ApiRole.Mobile, default));
+
+            var authorize = new ManifestAuthorization("authorize-1", 17, "INV-EXTRA", "E2801170AAAAAAAAAAAAAAAA");
+            var authorized = await database.AuthorizeAsync("WH-A-GATE-01", "TR-2026-00128", authorize, default);
+            Assert.Equal(18, authorized.NewVersion);
+            var duplicate = await database.AuthorizeAsync("WH-A-GATE-01", "TR-2026-00128", authorize, default);
+            Assert.True(duplicate.AlreadyApplied);
+            var conflict = await Assert.ThrowsAsync<VersionConflictException>(() => database.AuthorizeAsync(
+                "WH-A-GATE-01", "TR-2026-00128",
+                new ManifestAuthorization("authorize-stale", 17, "INV-STALE", "E2801170BBBBBBBBBBBBBBBB"), default));
+            Assert.Equal(18, conflict.CurrentVersion);
+
+            await Assert.ThrowsAsync<InvalidDataException>(() => database.RevokeAsync(
+                "WH-A-GATE-01", "TR-2026-00128",
+                new ManifestRevocation("revoke-no-reason", 18, ["E2801170AAAAAAAAAAAAAAAA"],
+                    "", "wsl-test-operator"), default));
+            await Assert.ThrowsAsync<InvalidDataException>(() => database.RevokeAsync(
+                "WH-A-GATE-01", "TR-2026-00128",
+                new ManifestRevocation("revoke-no-operator", 18, ["E2801170AAAAAAAAAAAAAAAA"],
+                    "RETURNED_TO_STORAGE", ""), default));
+
+            var revoked = await database.RevokeAsync("WH-A-GATE-01", "TR-2026-00128",
+                new ManifestRevocation("revoke-1", 18, ["E2801170AAAAAAAAAAAAAAAA"],
+                    "RETURNED_TO_STORAGE", "wsl-test-operator"), default);
+            Assert.Equal(19, revoked.NewVersion);
+            var completed = await database.CompleteAsync("WH-A-GATE-01", "TR-2026-00128",
+                new ManifestCompletionRequest("complete-1", 19), default);
+            Assert.Equal(20, completed.NewVersion);
+            var manifest = await database.GetManifestAsync("WH-A-GATE-01", default);
+            Assert.NotNull(manifest);
+            Assert.Equal("COMPLETED", manifest.Status);
+            Assert.Empty(manifest.Items);
         }
         finally
         {

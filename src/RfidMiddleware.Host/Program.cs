@@ -71,17 +71,27 @@ builder.Services.AddHostedService<ReaderPipelineWorker>();
 var app = builder.Build();
 var startupStore = app.Services.GetRequiredService<PostgresMiddlewareStore>();
 await startupStore.InitializeAsync();
+var startupAuthorization = await startupStore.GetAuthorizationStateAsync();
 var startupManifest = await startupStore.GetActiveAsync();
 var startupState = app.Services.GetRequiredService<RuntimeState>();
-if (startupManifest is null)
+startupState.AuthorizationState = startupAuthorization.State;
+startupState.LatestManifestVersion = startupAuthorization.Version;
+if (startupManifest is null && startupAuthorization.State == AuthorizationState.Uninitialized)
 {
     try
     {
         var initial = await app.Services.GetRequiredService<IManifestClient>().GetCurrentAsync(null);
-        if (initial.Changed && initial.Manifest is not null)
+        if (initial.Directive == ManifestFetchDirective.Activate && initial.Manifest is not null)
         {
             await startupStore.StageAndActivateAsync(initial.Manifest);
             startupManifest = await startupStore.GetActiveAsync();
+        }
+        else if (initial.Directive == ManifestFetchDirective.Deactivate && initial.Completion is not null)
+        {
+            await startupStore.DeactivateAsync(initial.Completion);
+            startupAuthorization = await startupStore.GetAuthorizationStateAsync();
+            startupState.AuthorizationState = startupAuthorization.State;
+            startupState.LatestManifestVersion = startupAuthorization.Version;
         }
     }
     catch (Exception ex)
@@ -92,6 +102,8 @@ if (startupManifest is null)
 if (startupManifest is not null)
 {
     app.Services.GetRequiredService<ValidationEngine>().Activate(startupManifest);
+    startupState.AuthorizationState = AuthorizationState.Active;
+    startupState.LatestManifestVersion = startupManifest.Version;
     startupState.ActiveManifestId = startupManifest.ManifestId;
     startupState.ActiveManifestVersion = startupManifest.Version;
     startupState.ManifestExpiresAt = startupManifest.ExpiresAt;
@@ -101,9 +113,12 @@ if (startupManifest is not null)
 app.MapGet("/status", (RuntimeState state, IReaderAdapter reader, IAlarmController alarm) =>
 {
     var now = DateTimeOffset.UtcNow;
+    var authorizationCritical = state.AuthorizationState == AuthorizationState.Uninitialized ||
+        state.AuthorizationState == AuthorizationState.Active &&
+        (state.ActiveManifestVersion is null || state.ManifestExpiresAt is null || state.ManifestExpiresAt <= now);
     var critical = !reader.Health.Connected || !alarm.Health.Healthy || state.ReadsDropped > 0 ||
-        state.ActiveManifestVersion is null || state.ManifestExpiresAt is null || state.ManifestExpiresAt <= now;
-    var warning = state.LastManifestError is not null || state.LastManifestSync is null ||
+        state.LastSystemError is not null || state.LastManifestError is not null || authorizationCritical;
+    var warning = state.LastManifestSync is null ||
         now - state.LastManifestSync > TimeSpan.FromSeconds(options.ManifestWarningSeconds);
     var alarmLatency = state.AlarmLatency();
     return Results.Ok(new
@@ -112,26 +127,30 @@ app.MapGet("/status", (RuntimeState state, IReaderAdapter reader, IAlarmControll
         state.StartedAt,
         reader = reader.Health,
         alarm = alarm.Health,
+        authorization = new { state.AuthorizationState, state.LatestManifestVersion },
         manifest = new { state.ActiveManifestId, state.ActiveManifestVersion, state.ManifestExpiresAt, state.LastManifestSync, state.LastManifestError },
+        system = new { state.LastSystemError },
         reads = new { received = state.ReadsReceived, dropped = state.ReadsDropped },
         alarmLatency = new { samples = alarmLatency.Samples, p99Milliseconds = alarmLatency.P99Milliseconds },
         scanDataPolicy = "LOCAL_ONLY"
     });
 });
-app.MapGet("/manifest", (RuntimeState state) => Results.Ok(new { state.ActiveManifestId, state.ActiveManifestVersion, state.ManifestExpiresAt, state.LastManifestSync, state.LastManifestError }));
+app.MapGet("/manifest", (RuntimeState state) => Results.Ok(new { state.AuthorizationState, state.LatestManifestVersion, state.ActiveManifestId, state.ActiveManifestVersion, state.ManifestExpiresAt, state.LastManifestSync, state.LastManifestError }));
 app.MapPost("/manifest/sync", (ManifestSyncTrigger trigger) => { trigger.Signal(); return Results.Accepted(); });
 app.MapGet("/audit", async (IEventRepository repository, CancellationToken token) => Results.Ok(await repository.GetStatsAsync(token)));
 app.MapGet("/db/verify", async (IEventRepository repository, CancellationToken token) => Results.Ok(new { result = await repository.VerifyAsync(token) }));
 app.MapGet("/reader/test", (IReaderAdapter reader) => Results.Ok(reader.Health));
 app.MapGet("/reader/recent", (RuntimeState state) => Results.Ok(state.RecentReads()));
 app.MapGet("/healthz", (RuntimeState state, IReaderAdapter reader, IAlarmController alarm) =>
-    reader.Health.Connected && alarm.Health.Healthy && state.ActiveManifestVersion is not null && state.ManifestExpiresAt > DateTimeOffset.UtcNow
+    reader.Health.Connected && alarm.Health.Healthy && state.LastSystemError is null && state.LastManifestError is null && state.ReadsDropped == 0 &&
+    (state.AuthorizationState == AuthorizationState.Completed ||
+     state.AuthorizationState == AuthorizationState.Active && state.ActiveManifestVersion is not null && state.ManifestExpiresAt > DateTimeOffset.UtcNow)
         ? Results.Ok()
         : Results.StatusCode(503));
 app.MapGet("/metrics", (RuntimeState state) =>
 {
     var latency = state.AlarmLatency();
-    return Results.Text($"rfid_reads_total {state.ReadsReceived}\nrfid_reads_dropped_total {state.ReadsDropped}\nrfid_scan_data_local_only 1\nrfid_alarm_latency_p99_milliseconds {latency.P99Milliseconds ?? 0}\n", "text/plain");
+    return Results.Text($"rfid_reads_total {state.ReadsReceived}\nrfid_reads_dropped_total {state.ReadsDropped}\nrfid_scan_data_local_only 1\nrfid_system_fault {((state.LastSystemError is null) ? 0 : 1)}\nrfid_manifest_sync_fault {((state.LastManifestError is null) ? 0 : 1)}\nrfid_alarm_latency_p99_milliseconds {latency.P99Milliseconds ?? 0}\n", "text/plain");
 });
 
 try

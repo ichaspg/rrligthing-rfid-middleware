@@ -19,6 +19,8 @@ public sealed class ValidationEngine
         }
     }
 
+    public void Deactivate() => Volatile.Write(ref _snapshot, null);
+
     public ValidationDecision Validate(string epc, DateTimeOffset now)
         => ValidateAgainst(epc, now, Snapshot);
 

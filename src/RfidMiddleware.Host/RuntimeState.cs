@@ -10,11 +10,14 @@ public sealed class RuntimeState
     private long _readsReceived;
     private long _readsDropped;
     public DateTimeOffset StartedAt { get; } = DateTimeOffset.UtcNow;
+    public AuthorizationState AuthorizationState { get; set; } = AuthorizationState.Uninitialized;
+    public long? LatestManifestVersion { get; set; }
     public string? ActiveManifestId { get; set; }
     public long? ActiveManifestVersion { get; set; }
     public DateTimeOffset? ManifestExpiresAt { get; set; }
     public DateTimeOffset? LastManifestSync { get; set; }
     public string? LastManifestError { get; set; }
+    public string? LastSystemError { get; set; }
     public long ReadsReceived => Interlocked.Read(ref _readsReceived);
     public long ReadsDropped => Interlocked.Read(ref _readsDropped);
 

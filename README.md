@@ -1,18 +1,19 @@
 # RFID Transport Validation Middleware
 
-.NET 8 LTS command-line service for Ubuntu 24.04 x86-64. It validates RFID EPC observations against a durable active manifest, operates offline, and drives relay/buzzer alarms. Scan data remains in the middleware's local PostgreSQL database and is never uploaded to the server.
+.NET 8 LTS command-line service for Ubuntu 24.04 x86-64. It validates RFID EPC observations against a durable mobile-controlled manifest, operates offline, and pulses reader digital output 0 only for tags that cannot be authorized. Scan data remains in the middleware's local PostgreSQL database and is never uploaded to the server.
 
 ## Purpose
 
-The middleware sits between an RFID reader and a transport-management backend. It downloads a versioned authorization manifest, validates tags locally with low latency, operates during backend outages, and activates the reader relay/buzzer when a tag is unauthorized or the system must fail closed.
+The middleware sits between an RFID reader and a transport-management backend. It downloads a versioned authorization manifest, validates tags locally with low latency, and operates during backend outages. Reader digital output 0 is reserved for unauthorized tag observations; technical faults are exposed through health, metrics, and logs.
 
 The supported operational flow is:
 
 ```text
-authorize → tag keluar → tag balik using the same manifest
-          → tag stored → mobile app sends revoke
-          → backend creates the next manifest version
-          → middleware synchronizes → later tag scan is unauthorized
+mobile authorizes EPC → backend publishes manifest version → middleware synchronizes
+                     → listed tag scan passes silently
+mobile revokes EPC   → backend publishes next version → middleware synchronizes
+                     → later tag scan raises the unauthorized alarm
+mobile completes batch → middleware clears active authorization
 ```
 
 ## Important data policy
@@ -30,7 +31,8 @@ authorize → tag keluar → tag balik using the same manifest
 - EPC normalization, multi-antenna aggregation, and configurable duplicate window.
 - Immutable, monotonically increasing manifest versions with atomic activation.
 - Fail-closed validation for missing or expired manifests and persistence failures.
-- Relay and buzzer signaling for unauthorized tags and system faults.
+- Digital output 0 pulses only for tags that are unauthorized, invalid, or observed without a valid manifest.
+- Critical health, metrics, and structured logs for reader, database, queue, and synchronization faults.
 - PostgreSQL persistence for both the local middleware and test backend.
 - Idempotent mobile revocation requests with a durable backend audit.
 - Unix-socket operational CLI, health endpoint, metrics, diagnostics, DEB packaging, and systemd unit.
@@ -39,14 +41,14 @@ authorize → tag keluar → tag balik using the same manifest
 ## Architecture
 
 ```text
-Mobile app ── revoke HTTP request ──► backend API ──► rfid_backend PostgreSQL
+Mobile app ── authorize/revoke/complete ──► backend API ──► rfid_backend PostgreSQL
                                            │
                                      active manifest
                                            │ HTTP GET + ETag
                                            ▼
 RFID reader ── native SDK ──► middleware ──► rfid_edge PostgreSQL
                                   │             local scans only
-                                  └──► relay / buzzer
+                                  └──► digital output 0
 ```
 
 Development uses two databases in one PostgreSQL container:
@@ -58,7 +60,7 @@ Development uses two databases in one PostgreSQL container:
 
 ## Development environment
 
-The supported development environment is Ubuntu 24.04 or WSL2 Ubuntu 24.04 with the .NET 8 SDK or newer. The application targets .NET 8 LTS. Install `build-essential`, `postgresql-client`, `valgrind`, `strace`, `lsof`, and `patchelf`. The vendor libraries live in `linux/x86_64/release` and are copied to `native/` during build and publish. WSL supports managed tests, the SDK mock, and TCP readers; serial acceptance must run on physical Ubuntu.
+The supported development environment is Ubuntu 24.04 or WSL2 Ubuntu 24.04 with the .NET 10 SDK. The application itself targets .NET 8 LTS; the newer SDK is required for the `.slnx` solution format. Install `build-essential`, `postgresql-client`, `valgrind`, `strace`, `lsof`, and `patchelf`. The vendor libraries live in `linux/x86_64/release` and are copied to `native/` during build and publish. WSL supports managed tests, the SDK mock, TCP readers, and USB serial readers passed through with `usbipd`; final relay and antenna acceptance must still be performed with the physical hardware.
 
 Copy and load the development environment, then start PostgreSQL:
 
@@ -97,11 +99,12 @@ Both persistence layers use PostgreSQL. `rfid_edge` is private to the middleware
 
 ## Real hardware quick reference
 
-The committed native SDK is the Linux x86-64 build under `linux/x86_64/release`. For the current COM4 test reader, Windows exposes the Prolific USB serial adapter to WSL using `usbipd`, after which the middleware uses `/dev/ttyUSB0`.
+The committed native SDK is the Linux x86-64 build under `linux/x86_64/release`. For a USB serial reader, first obtain its current bus ID instead of assuming it is permanent. Windows exposes the adapter to WSL using `usbipd`, after which the middleware normally uses `/dev/ttyUSB0` or a stable `/dev/serial/by-id/...` path.
 
 ```powershell
-usbipd bind --busid 4-15
-usbipd attach --wsl --busid 4-15
+usbipd list
+usbipd bind --busid <BUSID>
+usbipd attach --wsl --busid <BUSID>
 ```
 
 The real test tags are:
@@ -129,7 +132,9 @@ All commands except `run` communicate with the running process through its Unix 
 ## HTTP API used in development
 
 - `GET /api/v1/middleware/{id}/manifest` — middleware manifest retrieval with ETag support.
-- `POST /api/v1/mobile/middleware/{id}/manifests/{manifestId}/revoke` — idempotent mobile revocation.
+- `POST /api/v1/mobile/middleware/{id}/manifests/{manifestId}/items/authorize` — idempotently authorize an EPC.
+- `POST /api/v1/mobile/middleware/{id}/manifests/{manifestId}/revoke` — idempotently revoke EPCs.
+- `POST /api/v1/mobile/middleware/{id}/manifests/{manifestId}/complete` — complete a batch and clear authorization.
 - `POST /admin/middleware/{id}/manifest/activate` — development manifest activation.
 - `PUT /admin/middleware/{id}/fault` — development fault injection.
 - `GET /healthz` — backend health.
@@ -162,7 +167,7 @@ bash scripts/soak.sh 2
 bash scripts/build-deb.sh 0.1.0
 ```
 
-Run the release soak for 72 hours by passing `72` to `soak.sh`. Set `RFID_MIDDLEWARE_PID` to sample the live service's RSS, thread count, and file descriptors into `artifacts/soak/metrics.csv`. Serial commissioning, relay polarity, buzzer semantics, reader firmware, and antenna behavior must be verified on the production Ubuntu host before enabling transport operations.
+Run the release soak for 72 hours by passing `72` to `soak.sh`. Set `RFID_MIDDLEWARE_PID` to sample the live service's RSS, thread count, and file descriptors into `artifacts/soak/metrics.csv`. Serial commissioning, digital output 0 polarity and timing, reader firmware, and antenna behavior must be verified on the production Ubuntu host before enabling transport operations.
 
 PostgreSQL integration tests use `RFID_TEST_POSTGRES`. Each test creates an isolated schema and removes it afterward.
 
@@ -190,7 +195,7 @@ packaging/                          DEB and systemd configuration
 - Use a stable `/dev/serial/by-id/...` path instead of `/dev/ttyUSB0` in production.
 - Set a strong PostgreSQL password and a production bearer token outside `appsettings.json`.
 - Require TLS for communication with the production backend.
-- Verify relay polarity, buzzer timing, enabled antennas, baud/address, and reader firmware on physical hardware.
+- Verify digital output 0 polarity and pulse timing, enabled antennas, baud/address, and reader firmware on physical hardware.
 - Run the release soak and native lifecycle tests before deployment.
 
 ## Operational paths
@@ -202,4 +207,4 @@ packaging/                          DEB and systemd configuration
 - Control socket: `/run/rfid-middleware/control.sock`
 - Logs: systemd journal
 
-The service fails closed when no active manifest exists, the manifest is expired, persistence fails, or the raw-read channel overflows.
+Tag validation fails closed when no active manifest exists or the manifest is expired. Persistence, reader, and queue faults make service health critical without activating the physical unauthorized-tag alarm.

@@ -21,6 +21,9 @@ public sealed class PostgresPersistenceTests
         var active = await store.GetActiveAsync();
         Assert.NotNull(active);
         Assert.Equal(10, active.Epcs.Count);
+        var authorization = await store.GetAuthorizationStateAsync();
+        Assert.Equal(AuthorizationState.Active, authorization.State);
+        Assert.Equal(document.Version, authorization.Version);
 
         var scan = new ScanEvent(UlidGenerator.NewUlid(now), document.ManifestId, document.Version,
             document.Items[0].Epc, ValidationOutcome.Authorized, now, now, 2, "R1", new HashSet<int> { 8 }, -40,
@@ -30,6 +33,12 @@ public sealed class PostgresPersistenceTests
         Assert.Equal(1, stats.Total);
         Assert.Equal(1, stats.Authorized);
         Assert.Equal("ok", await store.VerifyAsync());
+
+        await store.DeactivateAsync(new ManifestCompletion(document.ManifestId, document.Version + 1));
+        Assert.Null(await store.GetActiveAsync());
+        authorization = await store.GetAuthorizationStateAsync();
+        Assert.Equal(AuthorizationState.Completed, authorization.State);
+        Assert.Equal(document.Version + 1, authorization.Version);
     }
 }
 

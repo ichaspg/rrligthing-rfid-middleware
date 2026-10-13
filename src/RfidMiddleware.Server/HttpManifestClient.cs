@@ -13,17 +13,25 @@ public sealed class HttpManifestClient(HttpClient httpClient, ServerOptions opti
         if (!string.IsNullOrWhiteSpace(etag)) request.Headers.IfNoneMatch.Add(new EntityTagHeaderValue(etag));
         AddAuthentication(request);
         using var response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        if (response.StatusCode == HttpStatusCode.NotModified) return new(false, null, etag);
+        if (response.StatusCode == HttpStatusCode.NotModified)
+            return new(ManifestFetchDirective.Unchanged, null, null, etag);
         response.EnsureSuccessStatusCode();
         var payload = await response.Content.ReadFromJsonAsync<ManifestPayload>(cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException("Manifest response was empty.");
         var responseEtag = response.Headers.ETag?.Tag;
+        if (string.Equals(payload.Status, "COMPLETED", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(payload.ManifestId) || payload.Version < 1)
+                throw new InvalidDataException("Completed manifest directive is invalid.");
+            return new(ManifestFetchDirective.Deactivate, null,
+                new ManifestCompletion(payload.ManifestId, payload.Version), responseEtag);
+        }
         var expires = payload.ExpiresAt ?? clock.UtcNow.AddMinutes(30);
         var items = payload.Items.Select(x => new ManifestItem(x.InventoryId, x.Epc)).ToArray();
         var document = new ManifestDocument(payload.ManifestId, payload.TransportId, payload.Version, payload.Status,
             payload.ItemCount, payload.Checksum, responseEtag, clock.UtcNow, expires, items);
         ManifestValidator.Validate(document);
-        return new(true, document, responseEtag);
+        return new(ManifestFetchDirective.Activate, document, null, responseEtag);
     }
 
     private void AddAuthentication(HttpRequestMessage request)

@@ -60,11 +60,7 @@ internal static unsafe partial class NativeMethods
 
     [LibraryImport(LibraryName, EntryPoint = "set_relay_status")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial int SetRelayStatus(int handle, int relay, NativeRelayStatus status);
-
-    [LibraryImport(LibraryName, EntryPoint = "set_buzz")]
-    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial int SetBuzz(int handle, int status);
+    internal static partial int SetRelayStatus(int handle, int output, NativeRelayStatus status);
 }
 
 internal enum NativeTransport { Tcp, Udp }

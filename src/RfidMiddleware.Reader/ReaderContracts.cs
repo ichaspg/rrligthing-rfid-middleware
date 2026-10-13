@@ -15,7 +15,6 @@ public interface IAlarmController
 {
     AlarmHealth Health { get; }
     ValueTask SignalUnauthorizedAsync(CancellationToken cancellationToken = default);
-    ValueTask SignalSystemFaultAsync(CancellationToken cancellationToken = default);
     ValueTask ResetAsync(CancellationToken cancellationToken = default);
 }
 

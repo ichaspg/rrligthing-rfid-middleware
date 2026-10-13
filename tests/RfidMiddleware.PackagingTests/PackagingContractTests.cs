@@ -26,6 +26,7 @@ public sealed class PackagingContractTests
         Assert.Equal(string.Empty, json.RootElement.GetProperty("DatabaseConnectionString").GetString());
         Assert.Equal("/run/rfid-middleware/control.sock", json.RootElement.GetProperty("ControlSocket").GetString());
         Assert.StartsWith("/dev/serial/by-id/", json.RootElement.GetProperty("VendorReader").GetProperty("SerialDevice").GetString(), StringComparison.Ordinal);
+        Assert.False(json.RootElement.GetProperty("VendorReader").TryGetProperty("RelayNumber", out _));
     }
 
     [Fact]

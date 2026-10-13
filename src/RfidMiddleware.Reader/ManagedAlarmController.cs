@@ -24,18 +24,6 @@ public sealed class ManagedAlarmController(ILogger<ManagedAlarmController> logge
         return ValueTask.CompletedTask;
     }
 
-    public ValueTask SignalSystemFaultAsync(CancellationToken cancellationToken = default)
-    {
-        logger.LogError("RFID middleware fail-closed system alarm");
-        lock (_sync)
-        {
-            _pulseCancellation?.Cancel();
-            _pulseCancellation = null;
-        }
-        Volatile.Write(ref _health, new(false, true, "System fault", clock.UtcNow));
-        return ValueTask.CompletedTask;
-    }
-
     public ValueTask ResetAsync(CancellationToken cancellationToken = default)
     {
         lock (_sync)

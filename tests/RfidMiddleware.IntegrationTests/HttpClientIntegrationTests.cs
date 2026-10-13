@@ -37,15 +37,42 @@ public sealed class HttpClientIntegrationTests
         {
             var client = new HttpManifestClient(http, new ServerOptions { MiddlewareId = "MW-1", TokenEnvironmentVariable = tokenName }, new FixedClock());
             var first = await client.GetCurrentAsync(null);
-            Assert.True(first.Changed);
+            Assert.Equal(ManifestFetchDirective.Activate, first.Directive);
             Assert.Equal(17, first.Manifest?.Version);
             Assert.Equal("\"M-1-17\"", first.ETag);
 
             var second = await client.GetCurrentAsync(first.ETag);
-            Assert.False(second.Changed);
+            Assert.Equal(ManifestFetchDirective.Unchanged, second.Directive);
             Assert.Equal(2, calls);
         }
         finally { Environment.SetEnvironmentVariable(tokenName, null); }
+    }
+
+    [Fact]
+    public async Task ManifestClientReturnsDeactivateDirectiveForCompletedManifest()
+    {
+        using var http = new HttpClient(new DelegateHandler(_ =>
+        {
+            var json = """
+                {"manifestId":"M-1","transportId":"T-1","version":18,"status":"COMPLETED",
+                 "itemCount":0,"checksum":"","expiresAt":"2026-01-01T00:00:00Z","items":[]}
+                """;
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            };
+            response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"M-1-18-COMPLETED\"");
+            return response;
+        })) { BaseAddress = new Uri("http://test/") };
+
+        var client = new HttpManifestClient(http,
+            new ServerOptions { MiddlewareId = "MW-1", TokenEnvironmentVariable = "RFID_UNUSED_TEST_TOKEN" },
+            new FixedClock());
+        var result = await client.GetCurrentAsync(null);
+
+        Assert.Equal(ManifestFetchDirective.Deactivate, result.Directive);
+        Assert.Null(result.Manifest);
+        Assert.Equal(new ManifestCompletion("M-1", 18), result.Completion);
     }
 
     private sealed class FixedClock : IClock { public DateTimeOffset UtcNow => DateTimeOffset.Parse("2026-01-01T00:00:00Z"); }

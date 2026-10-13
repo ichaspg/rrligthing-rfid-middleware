@@ -22,10 +22,15 @@ var app = builder.Build();
 
 app.Use(async (context, next) =>
 {
-    if (context.Request.Path.StartsWithSegments("/admin")) { await next(); return; }
+    if (context.Request.Path.StartsWithSegments("/admin") || context.Request.Path.StartsWithSegments("/healthz"))
+    {
+        await next();
+        return;
+    }
     var id = context.Request.RouteValues["middlewareId"]?.ToString() ?? string.Empty;
     var token = context.Request.Headers.Authorization.ToString().Replace("Bearer ", string.Empty, StringComparison.OrdinalIgnoreCase);
-    if (!await database.IsAuthorizedAsync(id, token, context.RequestAborted))
+    var role = context.Request.Path.StartsWithSegments("/api/v1/mobile") ? ApiRole.Mobile : ApiRole.Middleware;
+    if (!await database.IsAuthorizedAsync(id, token, role, context.RequestAborted))
     {
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
         return;
@@ -74,6 +79,28 @@ app.MapPost("/api/v1/mobile/middleware/{middlewareId}/manifests/{manifestId}/rev
         return Results.Ok(result);
     }
     catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+    catch (VersionConflictException ex) { return Results.Conflict(new { error = ex.Message, currentVersion = ex.CurrentVersion }); }
+    catch (IdempotencyConflictException ex) { return Results.Conflict(new { error = ex.Message }); }
+    catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+    catch (InvalidDataException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/v1/mobile/middleware/{middlewareId}/manifests/{manifestId}/items/authorize", async (
+    string middlewareId, string manifestId, ManifestAuthorization request, CancellationToken token) =>
+{
+    try { return Results.Ok(await database.AuthorizeAsync(middlewareId, manifestId, request, token)); }
+    catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+    catch (VersionConflictException ex) { return Results.Conflict(new { error = ex.Message, currentVersion = ex.CurrentVersion }); }
+    catch (IdempotencyConflictException ex) { return Results.Conflict(new { error = ex.Message }); }
+    catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+    catch (InvalidDataException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/v1/mobile/middleware/{middlewareId}/manifests/{manifestId}/complete", async (
+    string middlewareId, string manifestId, ManifestCompletionRequest request, CancellationToken token) =>
+{
+    try { return Results.Ok(await database.CompleteAsync(middlewareId, manifestId, request, token)); }
+    catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+    catch (VersionConflictException ex) { return Results.Conflict(new { error = ex.Message, currentVersion = ex.CurrentVersion }); }
+    catch (IdempotencyConflictException ex) { return Results.Conflict(new { error = ex.Message }); }
     catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
     catch (InvalidDataException ex) { return Results.BadRequest(new { error = ex.Message }); }
 });

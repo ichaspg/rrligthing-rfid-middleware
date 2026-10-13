@@ -13,8 +13,10 @@ public enum ValidationOutcome
     PersistenceError
 }
 
-public enum EventSyncState { LocalOnly, Pending, InFlight, Acknowledged, Retry, Rejected, DeadLetter }
+public enum EventSyncState { LocalOnly }
 public enum ManifestState { Staged, Validated, Active, Superseded, Invalid }
+public enum AuthorizationState { Uninitialized, Active, Completed }
+public enum ManifestFetchDirective { Unchanged, Activate, Deactivate }
 
 public sealed record ManifestItem(string InventoryId, string Epc);
 
@@ -72,16 +74,17 @@ public sealed record ScanEvent(
     string ReaderId,
     IReadOnlySet<int> AntennaIds,
     int StrongestRssi,
-    EventSyncState SyncState = EventSyncState.Pending,
-    int RetryCount = 0,
-    DateTimeOffset? NextAttemptAt = null,
-    string? LastError = null);
+    EventSyncState SyncState = EventSyncState.LocalOnly);
 
-public sealed record EventUploadResult(string EventId, UploadDisposition Disposition, int? HttpStatus = null, string? Error = null);
-public enum UploadDisposition { Acknowledged, Retry, Rejected }
-
-public sealed record QueueStats(int Pending, int InFlight, int Retry, int Rejected, int DeadLetter, DateTimeOffset? OldestPending);
 public sealed record LocalAuditStats(long Total, long Authorized, long Unauthorized, long Other, DateTimeOffset? NewestObservation);
 
 public sealed record ReaderHealth(bool Connected, bool InventoryRunning, string? Error, DateTimeOffset UpdatedAt);
 public sealed record AlarmHealth(bool Healthy, bool Active, string? Error, DateTimeOffset UpdatedAt);
+
+public sealed record AuthorizationStateSnapshot(
+    AuthorizationState State,
+    string? ManifestId,
+    long? Version,
+    DateTimeOffset UpdatedAt);
+
+public sealed record ManifestCompletion(string ManifestId, long Version);

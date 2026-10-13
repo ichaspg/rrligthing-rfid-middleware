@@ -19,5 +19,5 @@
     "antennas": [1, 2, 3, 4],
     "load": { "readsPerSecond": 1000, "authorizedRatio": 0.95, "seed": 1729 }
   },
-  "eventStates": ["PENDING", "RETRY", "ACKNOWLEDGED", "REJECTED", "DEAD_LETTER"]
+  "eventStates": ["LOCAL_ONLY"]
 }
