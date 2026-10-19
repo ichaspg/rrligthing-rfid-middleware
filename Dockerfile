@@ -51,7 +51,7 @@ RUN apt-get update \
     && install -d -o rfid-mock -g rfid-mock -m 0750 /app
 WORKDIR /app
 COPY --from=build --chown=rfid-mock:rfid-mock /out/mock-backend/ ./
-ENV ASPNETCORE_URLS=http://0.0.0.0:5080 \
+ENV URLS=http://0.0.0.0:5080 \
     DOTNET_EnableDiagnostics=0
 USER rfid-mock:rfid-mock
 EXPOSE 5080

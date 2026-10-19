@@ -17,7 +17,7 @@ services:
     command: ["--reset", "--seed-count", "${RFID_DEV_SEED_COUNT:-100}"]
     environment:
       ConnectionStrings__MockServer: Host=postgres;Port=5432;Database=rfid_backend;Username=rfid;Password=rfid-dev-password
-      ASPNETCORE_URLS: http://0.0.0.0:5080
+      URLS: http://0.0.0.0:5080
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5080/healthz"]
       interval: 5s
