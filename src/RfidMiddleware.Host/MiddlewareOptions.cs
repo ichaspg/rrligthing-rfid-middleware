@@ -9,6 +9,8 @@ public sealed class MiddlewareOptions
     public string Id { get; set; } = "WH-A-GATE-01";
     public string DatabaseConnectionString { get; set; } = string.Empty;
     public string ControlSocket { get; set; } = "data/control.sock";
+    public string ReaderLockFile { get; set; } = "data/reader.lock";
+    public string CommissioningBackupDirectory { get; set; } = "data/commissioning";
     public int ManifestPollSeconds { get; set; } = 5;
     public int ManifestWarningSeconds { get; set; } = 300;
     public int DedupWindowMilliseconds { get; set; } = 2000;

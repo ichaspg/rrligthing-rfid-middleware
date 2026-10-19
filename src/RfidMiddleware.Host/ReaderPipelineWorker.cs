@@ -115,8 +115,20 @@ public sealed class ReaderPipelineWorker(
         var key = string.IsNullOrEmpty(decision.NormalizedEpc) ? epc : decision.NormalizedEpc;
         if (decision.Outcome != ValidationOutcome.Authorized && ShouldAlarm(key, observedAt))
         {
-            await alarm.SignalUnauthorizedAsync(token);
-            state.RecordAlarmLatency(observedAt, clock.UtcNow);
+            try
+            {
+                await alarm.SignalUnauthorizedAsync(token);
+                state.RecordAlarmLatency(observedAt, clock.UtcNow);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogCritical(ex, "Unauthorized alarm failed for EPC {Epc}; scan processing will continue", key);
+                state.LastSystemError = ex.Message;
+            }
         }
     }
 

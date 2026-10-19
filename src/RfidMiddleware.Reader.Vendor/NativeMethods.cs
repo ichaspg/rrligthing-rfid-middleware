@@ -61,11 +61,43 @@ internal static unsafe partial class NativeMethods
     [LibraryImport(LibraryName, EntryPoint = "set_relay_status")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int SetRelayStatus(int handle, int output, NativeRelayStatus status);
+
+    [LibraryImport(LibraryName, EntryPoint = "set_buzz")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int SetBuzz(int handle, NativeBuzzerStatus status);
+
+    [LibraryImport(LibraryName, EntryPoint = "get_network_param")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int GetNetworkParam(int handle, out NativeNetworkParam parameter);
+
+    [LibraryImport(LibraryName, EntryPoint = "free_network_param")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void FreeNetworkParam(ref NativeNetworkParam parameter);
+
+    [LibraryImport(LibraryName, EntryPoint = "set_network_param_with_dns", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int SetNetworkParamWithDns(
+        int handle, string ip, string mask, string gateway, int port, nint dns);
+
+    [LibraryImport(LibraryName, EntryPoint = "reboot")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int Reboot(int handle);
 }
 
 internal enum NativeTransport { Tcp, Udp }
 internal enum NativeWorkMode { Command, Auto, Trigger, BidirectionalTrigger }
 internal enum NativeRelayStatus { Closed, Open }
+internal enum NativeBuzzerStatus { On, Off }
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeNetworkParam
+{
+    internal nint Ip;
+    internal nint Mask;
+    internal nint Gateway;
+    internal int Port;
+    internal nint Dns;
+}
 
 [StructLayout(LayoutKind.Sequential)]
 internal unsafe struct NativeAutoReadOutput

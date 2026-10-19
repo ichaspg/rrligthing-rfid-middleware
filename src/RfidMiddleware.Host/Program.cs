@@ -12,8 +12,11 @@ var command = args.FirstOrDefault()?.ToLowerInvariant() ?? "help";
 var configPath = GetOption(args, "--config") ?? "appsettings.json";
 if (command != "run")
 {
+    if (command == "reader" && args.Length > 1 && string.Equals(args[1], "network", StringComparison.OrdinalIgnoreCase))
+        return RunReaderNetworkCommand(args, configPath);
+
     await RunClientCommandAsync(command, args, configPath);
-    return;
+    return 0;
 }
 
 var builder = WebApplication.CreateBuilder(Array.Empty<string>());
@@ -60,7 +63,8 @@ if (string.Equals(options.ReaderMode, "ManagedFake", StringComparison.OrdinalIgn
 else
 {
     builder.Services.AddSingleton(sp => new VendorReaderAdapter(
-        sp.GetRequiredService<ILogger<VendorReaderAdapter>>(), sp.GetRequiredService<IClock>(), options.VendorReader));
+        sp.GetRequiredService<ILogger<VendorReaderAdapter>>(), sp.GetRequiredService<IClock>(), options.VendorReader,
+        options.ReaderLockFile));
     builder.Services.AddSingleton<IReaderAdapter>(sp => sp.GetRequiredService<VendorReaderAdapter>());
     builder.Services.AddSingleton<IAlarmController>(sp => new VendorAlarmController(
         sp.GetRequiredService<VendorReaderAdapter>(), sp.GetRequiredService<IClock>(), options.VendorReader));
@@ -162,6 +166,8 @@ try
 }
 finally { if (File.Exists(socketPath)) File.Delete(socketPath); }
 
+return 0;
+
 static string? GetOption(string[] values, string name)
 {
     var index = Array.FindIndex(values, x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase));
@@ -172,6 +178,8 @@ static void ValidateOptions(MiddlewareOptions value)
 {
     if (string.IsNullOrWhiteSpace(value.Id)) throw new InvalidDataException("Middleware Id is required.");
     if (string.IsNullOrWhiteSpace(value.DatabaseConnectionString)) throw new InvalidDataException("DatabaseConnectionString is required.");
+    if (string.IsNullOrWhiteSpace(value.ReaderLockFile)) throw new InvalidDataException("ReaderLockFile is required.");
+    if (string.IsNullOrWhiteSpace(value.CommissioningBackupDirectory)) throw new InvalidDataException("CommissioningBackupDirectory is required.");
     if (value.DedupWindowMilliseconds is < 100 or > 60_000) throw new InvalidDataException("DedupWindowMilliseconds is invalid.");
     if (!Uri.TryCreate(value.Server.BaseUrl, UriKind.Absolute, out _)) throw new InvalidDataException("Server BaseUrl is invalid.");
 }
@@ -194,6 +202,9 @@ static async Task RunClientCommandAsync(string command, string[] values, string 
             rfid-middleware healthcheck
             rfid-middleware version
             rfid-middleware reader test|watch [--duration <seconds>]
+            rfid-middleware reader network show [--json] --config <file>
+            rfid-middleware reader network configure --ip <ip> --mask <mask> --gateway <ip> [--port 1969] [--dns <ip>] [--apply] --config <file>
+            rfid-middleware reader network verify --address <ip> [--port 1969] --config <file>
             rfid-middleware manifest status|sync
             rfid-middleware audit stats
             rfid-middleware db verify
@@ -220,6 +231,75 @@ static async Task RunClientCommandAsync(string command, string[] values, string 
         _ => throw new ArgumentException("Unknown command. Run 'rfid-middleware help'.")
     };
     Console.WriteLine(Pretty(output));
+}
+
+static int RunReaderNetworkCommand(string[] values, string config)
+{
+    try
+    {
+        var action = values.Length > 2 ? values[2].ToLowerInvariant() : string.Empty;
+        var configuration = new ConfigurationBuilder()
+            .AddJsonFile(Path.GetFullPath(config), false)
+            .AddEnvironmentVariables("RFID_")
+            .Build();
+        var middleware = configuration.Get<MiddlewareOptions>() ?? new MiddlewareOptions();
+        var commissioner = new ReaderNetworkCommissioner();
+        object output = action switch
+        {
+            "show" => commissioner.ShowSerial(middleware.VendorReader, middleware.ReaderLockFile),
+            "configure" => commissioner.ConfigureSerial(
+                middleware.VendorReader,
+                middleware.ReaderLockFile,
+                new ReaderNetworkSettings(
+                    RequireOption(values, "--ip"),
+                    RequireOption(values, "--mask"),
+                    RequireOption(values, "--gateway"),
+                    GetIntOption(values, "--port", 1969),
+                    GetOption(values, "--dns")),
+                values.Contains("--apply", StringComparer.OrdinalIgnoreCase),
+                middleware.CommissioningBackupDirectory),
+            "verify" => commissioner.VerifyTcp(
+                RequireOption(values, "--address"),
+                GetIntOption(values, "--port", 1969),
+                middleware.VendorReader.TimeoutMilliseconds,
+                middleware.ReaderLockFile),
+            _ => throw new ArgumentException("Unknown reader network command. Use show, configure, or verify.")
+        };
+        Console.WriteLine(JsonSerializer.Serialize(output, new JsonSerializerOptions { WriteIndented = true }));
+        return 0;
+    }
+    catch (ArgumentException ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+        return 2;
+    }
+    catch (ReaderDeviceBusyException ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+        return 3;
+    }
+    catch (ReaderNetworkVerificationException ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+        return 4;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+        return 1;
+    }
+}
+
+static string RequireOption(string[] values, string name) =>
+    GetOption(values, name) ?? throw new ArgumentException($"{name} is required.");
+
+static int GetIntOption(string[] values, string name, int defaultValue)
+{
+    var raw = GetOption(values, name);
+    if (raw is null) return defaultValue;
+    return int.TryParse(raw, out var parsed)
+        ? parsed
+        : throw new ArgumentException($"{name} must be an integer.");
 }
 
 static async Task<string> WatchAsync(ControlClient client, string[] values)

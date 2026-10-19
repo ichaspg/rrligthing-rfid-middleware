@@ -25,7 +25,12 @@ public sealed class PackagingContractTests
         using var json = JsonDocument.Parse(File.ReadAllText(Path.Combine(Root, "packaging", "appsettings.production.json")));
         Assert.Equal(string.Empty, json.RootElement.GetProperty("DatabaseConnectionString").GetString());
         Assert.Equal("/run/rfid-middleware/control.sock", json.RootElement.GetProperty("ControlSocket").GetString());
+        Assert.Equal("/run/rfid-middleware/reader.lock", json.RootElement.GetProperty("ReaderLockFile").GetString());
+        Assert.Equal("/var/lib/rfid-middleware/commissioning",
+            json.RootElement.GetProperty("CommissioningBackupDirectory").GetString());
         Assert.StartsWith("/dev/serial/by-id/", json.RootElement.GetProperty("VendorReader").GetProperty("SerialDevice").GetString(), StringComparison.Ordinal);
+        Assert.Equal("BuzzerAndDigitalOutputs",
+            json.RootElement.GetProperty("VendorReader").GetProperty("AlarmMode").GetString());
         Assert.False(json.RootElement.GetProperty("VendorReader").TryGetProperty("RelayNumber", out _));
     }
 
@@ -68,6 +73,20 @@ public sealed class PackagingContractTests
         Assert.Contains("target: mock-backend", development, StringComparison.Ordinal);
         Assert.Contains("RFID_API_TOKEN: dev-token", development, StringComparison.Ordinal);
         Assert.Contains("RFID_ReaderMode: ManagedFake", development, StringComparison.Ordinal);
+        Assert.Contains("RFID_VendorReader__AlarmMode: ${RFID_READER_ALARM_MODE:-BuzzerAndDigitalOutputs}", shipping,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DockerReaderOverridesDoNotPublishReaderPort()
+    {
+        var shipping = File.ReadAllText(Path.Combine(Root, "docker-compose.yml"));
+        var tcp = File.ReadAllText(Path.Combine(Root, "docker-compose.tcp.yml"));
+        var serial = File.ReadAllText(Path.Combine(Root, "docker-compose.serial.yml"));
+        Assert.DoesNotContain("1969:1969", shipping, StringComparison.Ordinal);
+        Assert.DoesNotContain("ports:", tcp, StringComparison.Ordinal);
+        Assert.DoesNotContain("ports:", serial, StringComparison.Ordinal);
+        Assert.Contains("/dev/rfid-reader", serial, StringComparison.Ordinal);
     }
 
     private static string FindRoot()

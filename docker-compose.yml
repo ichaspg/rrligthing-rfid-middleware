@@ -28,6 +28,8 @@ services:
       RFID_API_TOKEN: ${RFID_API_TOKEN:?Set RFID_API_TOKEN in the selected environment file}
       RFID_DatabaseConnectionString: Host=postgres;Port=5432;Database=rfid_edge;Username=${RFID_DATABASE_USER:-rfid};Password=${RFID_DATABASE_PASSWORD:?Set RFID_DATABASE_PASSWORD in the selected environment file}
       RFID_ControlSocket: /run/rfid-middleware/control.sock
+      RFID_ReaderLockFile: /run/rfid-middleware/reader.lock
+      RFID_CommissioningBackupDirectory: /var/lib/rfid-middleware/commissioning
       RFID_Server__BaseUrl: ${RFID_SERVER_BASE_URL:?Set RFID_SERVER_BASE_URL in the selected environment file}
       RFID_ReaderMode: ${RFID_READER_MODE:-Vendor}
       RFID_VendorReader__Transport: ${RFID_READER_TRANSPORT:-Tcp}
@@ -36,6 +38,7 @@ services:
       RFID_VendorReader__SerialDevice: ${RFID_SERIAL_CONTAINER_DEVICE:-/dev/rfid-reader}
       RFID_VendorReader__Baud: ${RFID_READER_BAUD:-115200}
       RFID_VendorReader__Rs485Address: ${RFID_READER_RS485_ADDRESS:-0}
+      RFID_VendorReader__AlarmMode: ${RFID_READER_ALARM_MODE:-BuzzerAndDigitalOutputs}
       RFID_NATIVE_DIR: /app/native
       LD_LIBRARY_PATH: /app/native
     init: true

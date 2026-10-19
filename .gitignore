@@ -16,6 +16,7 @@ artifacts/
 !.env.example
 !.env.production.example
 logs/
+data/
 tools/RfidMiddleware.MockServer/data/
 linux/arm64/
 linux/armv7/

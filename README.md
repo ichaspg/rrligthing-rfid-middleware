@@ -1,10 +1,12 @@
 # RFID Transport Validation Middleware
 
-.NET 8 LTS command-line service for Ubuntu 24.04 x86-64. It validates RFID EPC observations against a durable mobile-controlled manifest, operates offline, and pulses reader digital output 0 only for tags that cannot be authorized. Scan data remains in the middleware's local PostgreSQL database and is never uploaded to the server.
+For a single end-to-end handover covering installation, every CLI command, Docker and systemd deployment, WSL/VirtualBox USB, BAFO commissioning, permanent LAN operation, alarm outputs, hardware acceptance, the mobile API, and troubleshooting, use [docs/COMPLETE_OPERATIONS_AND_INTEGRATION_GUIDE.md](docs/COMPLETE_OPERATIONS_AND_INTEGRATION_GUIDE.md).
+
+.NET 8 LTS command-line service for Ubuntu 24.04 x86-64. It validates RFID EPC observations against a durable mobile-controlled manifest, operates offline, and raises the configured reader alarm only for tags that cannot be authorized. Scan data remains in the middleware's local PostgreSQL database and is never uploaded to the server.
 
 ## Purpose
 
-The middleware sits between an RFID reader and a transport-management backend. It downloads a versioned authorization manifest, validates tags locally with low latency, and operates during backend outages. Reader digital output 0 is reserved for unauthorized tag observations; technical faults are exposed through health, metrics, and logs.
+The middleware sits between an RFID reader and a transport-management backend. It downloads a versioned authorization manifest, validates tags locally with low latency, and operates during backend outages. Temporary hardware-setup mode attempts the built-in buzzer plus digital outputs 0 and 1 for every unauthorized observation; technical faults are exposed through health, metrics, and logs.
 
 The supported operational flow is:
 
@@ -31,7 +33,7 @@ mobile completes batch → middleware clears active authorization
 - EPC normalization, multi-antenna aggregation, and configurable duplicate window.
 - Immutable, monotonically increasing manifest versions with atomic activation.
 - Fail-closed validation for missing or expired manifests and persistence failures.
-- Digital output 0 pulses only for tags that are unauthorized, invalid, or observed without a valid manifest.
+- The configured alarm pulses only for tags that are unauthorized, invalid, or observed without a valid manifest. `BuzzerAndDigitalOutputs` is the temporary hardware-setup default and attempts the buzzer, output 0, and output 1 independently.
 - Critical health, metrics, and structured logs for reader, database, queue, and synchronization faults.
 - PostgreSQL persistence for both the local middleware and test backend.
 - Idempotent mobile revocation requests with a durable backend audit.
@@ -48,7 +50,7 @@ Mobile app ── authorize/revoke/complete ──► backend API ──► rfid
                                            ▼
 RFID reader ── native SDK ──► middleware ──► rfid_edge PostgreSQL
                                   │             local scans only
-                                  └──► digital output 0
+                                  └──► buzzer + outputs 0/1 (temporary setup)
 ```
 
 Development uses two databases in one PostgreSQL container:
@@ -157,7 +159,71 @@ docker compose -p rfid-dev \
   up -d --build
 ```
 
-The serial override maps the selected device to `/dev/rfid-reader` in the container. Unauthorized observations still pulse only digital output 0.
+The serial override maps the selected device to `/dev/rfid-reader` in the container. Unauthorized observations pulse the configured alarm; temporary setup mode attempts the built-in buzzer and digital outputs 0 and 1.
+
+### Commission a reader over BAFO USB-to-RS-232
+
+Commissioning configures the reader's own fixed LAN address. It does **not** store the middleware or backend server address in the reader. Normal operation remains an outbound TCP connection from middleware to reader on port 1969.
+
+Use a network-admin-approved static address outside the dynamic DHCP pool, or reserve that address for the reader. Connect Ethernet and the BAFO adapter at the same time. The BAFO connection is temporary and should be made beside the reader; do not use RS-232 for the permanent long-distance link.
+
+Set the stable BAFO device path and Ubuntu `dialout` group, then stop middleware so the commissioning command can acquire the exclusive reader lock:
+
+```bash
+export RFID_SERIAL_DEVICE=/dev/serial/by-id/REPLACE_WITH_BAFO_ID
+export RFID_DIALOUT_GID="$(getent group dialout | cut -d: -f3)"
+
+docker compose -p rfid-prod --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.serial.yml \
+  stop middleware
+
+docker compose -p rfid-prod --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.serial.yml \
+  run --rm --no-deps middleware \
+  reader network show --json --config /app/appsettings.json
+```
+
+Preview the proposed network change first. Without `--apply`, the command reads the current configuration but does not write, back up, or reboot:
+
+```bash
+docker compose -p rfid-prod --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.serial.yml \
+  run --rm --no-deps middleware \
+  reader network configure \
+  --ip 192.168.10.20 \
+  --mask 255.255.255.0 \
+  --gateway 192.168.10.1 \
+  --port 1969 \
+  --dns 192.168.10.2 \
+  --config /app/appsettings.json
+```
+
+Review the `current` and `proposed` values, then repeat the same command with `--apply`. Apply mode writes a timestamped backup under `/var/lib/rfid-middleware/commissioning`, writes the reader, reads the settings back over serial, and reboots only after an exact match. Any validation, SDK, lock, or read-back error returns a non-zero process exit code.
+
+After reboot, verify the LAN endpoint while middleware remains stopped:
+
+```bash
+export RFID_READER_ADDRESS=192.168.10.20
+
+docker compose -p rfid-prod --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.tcp.yml \
+  run --rm --no-deps middleware \
+  reader network verify \
+  --address "$RFID_READER_ADDRESS" --port 1969 \
+  --config /app/appsettings.json
+```
+
+Power-cycle the reader and repeat verification to prove the setting is persistent. Then remove BAFO, set `RFID_READER_ADDRESS` and `RFID_READER_PORT=1969` in `.env.production`, and start the production TCP stack:
+
+```bash
+docker compose -p rfid-prod --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.tcp.yml \
+  up -d --build
+```
+
+If LAN verification fails, keep BAFO attached. Open the latest JSON file in `/var/lib/rfid-middleware/commissioning`, copy its `settings` values into `reader network configure`, preview the rollback without `--apply`, then repeat it with `--apply`. Run serial `show`, LAN `verify`, and the power-cycle check again before leaving the installation.
+
+The reader and middleware must have direct private routing on the warehouse LAN/VLAN. Do not publish port 1969 through Docker or the public firewall. Twingate remains on the middleware-to-backend and administrative paths. Copper Ethernet is limited to 100 metres per segment; use a switch or fiber/media converters for a longer path.
 
 ### Ship without the mock backend
 
@@ -182,6 +248,8 @@ For production serial mode, append `-f docker-compose.serial.yml`; for TCP mode,
 
 ## Real hardware quick reference
 
+For a complete non-Docker Ubuntu server procedure, including the exact two-tag manifest, BAFO commissioning, serial/TCP execution, buzzer testing, SQL audit checks, systemd, and Docker verification, use [docs/SERVER_DIRECT_HARDWARE_TEST.md](docs/SERVER_DIRECT_HARDWARE_TEST.md).
+
 The committed native SDK is the Linux x86-64 build under `linux/x86_64/release`. For a USB serial reader, first obtain its current bus ID instead of assuming it is permanent. Windows exposes the adapter to WSL using `usbipd`, after which the middleware normally uses `/dev/ttyUSB0` or a stable `/dev/serial/by-id/...` path.
 
 ```powershell
@@ -190,10 +258,14 @@ usbipd bind --busid <BUSID>
 usbipd attach --wsl --busid <BUSID>
 ```
 
-The real test tags are:
+The current physical acceptance tags are:
 
-- `E280689400004010BF743D5C`
-- `E2806915000060068C95C54B`
+- `E28069950000400E45B4F53E`
+- `E280689400005010BF75955B`
+
+Nearby EPC `E280689400004010BF78D96A` was intentionally excluded and correctly detected as unauthorized during the October 19, 2026 COM11 test.
+
+The tested VM-6x V9.4 reader (`SW 1.1.31-GD`) previously returned SDK error `-3034` (`The relay is not supported`) for digital output 0. `VendorReader.AlarmMode` now defaults to `BuzzerAndDigitalOutputs` so the hardware team can configure and test the built-in buzzer plus outputs 0 and 1. A failure on one output does not prevent attempts on the other channels, scan auditing, or continued inventory; it does keep alarm health critical.
 
 ## CLI
 
@@ -204,6 +276,9 @@ rfid-middleware healthcheck
 rfid-middleware version
 rfid-middleware reader test
 rfid-middleware reader watch --duration <seconds>
+rfid-middleware reader network show --json --config <file>
+rfid-middleware reader network configure --ip <ip> --mask <mask> --gateway <ip> [--port 1969] [--dns <ip>] [--apply] --config <file>
+rfid-middleware reader network verify --address <ip> [--port 1969] --config <file>
 rfid-middleware manifest status
 rfid-middleware manifest sync
 rfid-middleware audit stats
@@ -211,7 +286,7 @@ rfid-middleware db verify
 rfid-middleware diagnostics bundle --output <file>
 ```
 
-All commands except `run` communicate with the running process through its Unix control socket. They do not open the live PostgreSQL database directly.
+The `reader network` commands are standalone commissioning commands and require the middleware to be stopped. Other commands except `run` communicate with the running process through its Unix control socket. Commissioning does not require PostgreSQL or backend connectivity.
 
 ## HTTP API used in development
 
@@ -231,12 +306,16 @@ Use `.env.example` for WSL development and `packaging/environment.example` for a
 
 - `RFID_API_TOKEN`
 - `RFID_DatabaseConnectionString`
+- `RFID_ReaderLockFile`
+- `RFID_CommissioningBackupDirectory`
 - `ConnectionStrings__MockServer`
 - `RFID_ReaderMode`
 - `RFID_VendorReader__Transport`
 - `RFID_VendorReader__SerialDevice`
 - `RFID_VendorReader__Baud`
 - `RFID_VendorReader__Rs485Address`
+- `RFID_VendorReader__AlarmMode` (`BuzzerAndDigitalOutputs` during setup; individual `Buzzer`, `DigitalOutput0`, or `DigitalOutput1` modes are also supported)
+- `RFID_VendorReader__AlarmPulseMilliseconds`
 - `RFID_NATIVE_DIR`
 - `LD_LIBRARY_PATH`
 
@@ -251,7 +330,7 @@ bash scripts/soak.sh 2
 bash scripts/build-deb.sh 0.1.0
 ```
 
-Run the release soak for 72 hours by passing `72` to `soak.sh`. Set `RFID_MIDDLEWARE_PID` to sample the live service's RSS, thread count, and file descriptors into `artifacts/soak/metrics.csv`. Serial commissioning, digital output 0 polarity and timing, reader firmware, and antenna behavior must be verified on the production Ubuntu host before enabling transport operations.
+Run the release soak for 72 hours by passing `72` to `soak.sh`. Set `RFID_MIDDLEWARE_PID` to sample the live service's RSS, thread count, and file descriptors into `artifacts/soak/metrics.csv`. Serial commissioning, configured alarm timing, reader firmware, and antenna behavior must be verified on the production Ubuntu host before enabling transport operations.
 
 PostgreSQL integration tests use `RFID_TEST_POSTGRES`. Each test creates an isolated schema and removes it afterward.
 
@@ -281,7 +360,7 @@ docker-compose*.yml                Shipping, development, TCP, and serial defini
 - Use a stable `/dev/serial/by-id/...` path instead of `/dev/ttyUSB0` in production.
 - Set a strong PostgreSQL password and a production bearer token outside `appsettings.json`.
 - Require TLS for communication with the production backend.
-- Verify digital output 0 polarity and pulse timing, enabled antennas, baud/address, and reader firmware on physical hardware.
+- Verify the selected alarm channels and pulse timing, enabled antennas, baud/address, and reader firmware on physical hardware. Setup mode is `BuzzerAndDigitalOutputs`; select the final single channel only after wiring acceptance.
 - Run the release soak and native lifecycle tests before deployment.
 
 ## Operational paths

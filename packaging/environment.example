@@ -2,3 +2,4 @@
 # set mode 0640, and replace every placeholder before starting the service.
 RFID_API_TOKEN=replace-with-middleware-api-token
 RFID_DatabaseConnectionString=Host=127.0.0.1;Port=5432;Database=rfid_edge;Username=rfid_middleware;Password=replace-with-strong-password
+RFID_VendorReader__AlarmMode=BuzzerAndDigitalOutputs

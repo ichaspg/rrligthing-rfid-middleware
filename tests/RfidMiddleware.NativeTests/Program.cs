@@ -15,4 +15,34 @@ for (var i = 0; i < iterations; i++)
 GC.Collect();
 GC.WaitForPendingFinalizers();
 Console.WriteLine($"Completed {iterations} native connect/disconnect cycles. WorkingSetDelta={Environment.WorkingSet - before}");
+Console.WriteLine("Network ABI " + string.Join(", ", NativeAbi.DescribeNetworkParam().Select(x => $"{x.Key}={x.Value}")));
+
+NativeMethods.InstallResolver();
+NativeReaderNetworkSessionFactory.ThrowIfError(NativeMethods.ConnectMock(26890, out var commissioningHandle),
+    "connect commissioning mock");
+using (var session = new NativeReaderNetworkSession(
+    ReaderSafeHandle.Create(commissioningHandle), ReaderDeviceLease.Acquire(null)))
+{
+    var beforeNetwork = session.Read();
+    var expected = new ReaderNetworkSettings("192.168.50.223", "255.255.255.0", "192.168.50.1", 1969, "192.168.50.2");
+    session.Configure(expected);
+    var afterNetwork = session.Read();
+    if (afterNetwork != expected)
+        throw new InvalidOperationException($"Native mock network read-back mismatch: before={beforeNetwork}, after={afterNetwork}");
+    NativeReaderNetworkSessionFactory.ThrowIfError(
+        NativeMethods.SetBuzz(commissioningHandle, NativeBuzzerStatus.On), "reader buzzer on");
+    NativeReaderNetworkSessionFactory.ThrowIfError(
+        NativeMethods.SetBuzz(commissioningHandle, NativeBuzzerStatus.Off), "reader buzzer off");
+    foreach (var output in new[] { 0, 1 })
+    {
+        NativeReaderNetworkSessionFactory.ThrowIfError(
+            NativeMethods.SetRelayStatus(commissioningHandle, output, NativeRelayStatus.Open),
+            $"digital output {output} on");
+        NativeReaderNetworkSessionFactory.ThrowIfError(
+            NativeMethods.SetRelayStatus(commissioningHandle, output, NativeRelayStatus.Closed),
+            $"digital output {output} off");
+    }
+    session.Reboot();
+    Console.WriteLine($"Network commissioning, buzzer, and outputs 0/1 mock passed: {afterNetwork.Ip}:{afterNetwork.Port}");
+}
 

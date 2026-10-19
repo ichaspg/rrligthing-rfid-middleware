@@ -12,16 +12,20 @@ public sealed class VendorReaderAdapter : IReaderAdapter
     private readonly ILogger<VendorReaderAdapter> _logger;
     private readonly IClock _clock;
     private readonly VendorReaderOptions _options;
+    private readonly string? _lockFile;
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private ReaderSafeHandle? _handle;
+    private ReaderDeviceLease? _deviceLease;
     private Func<RawTagRead, bool>? _onRead;
     private ReaderHealth _health;
 
-    public VendorReaderAdapter(ILogger<VendorReaderAdapter> logger, IClock clock, VendorReaderOptions options)
+    public VendorReaderAdapter(ILogger<VendorReaderAdapter> logger, IClock clock, VendorReaderOptions options,
+        string? lockFile = null)
     {
         _logger = logger;
         _clock = clock;
         _options = options;
+        _lockFile = lockFile;
         _health = new(false, false, null, clock.UtcNow);
         NativeMethods.InstallResolver();
     }
@@ -35,6 +39,7 @@ public sealed class VendorReaderAdapter : IReaderAdapter
         try
         {
             if (_handle is { IsInvalid: false, IsClosed: false }) return;
+            _deviceLease = ReaderDeviceLease.Acquire(_lockFile);
             var result = _options.Transport switch
             {
                 VendorTransport.NativeMock => NativeMethods.ConnectMock(_options.MockPort, out var mockHandle) is var rc
@@ -52,6 +57,8 @@ public sealed class VendorReaderAdapter : IReaderAdapter
         }
         catch (Exception ex)
         {
+            _deviceLease?.Dispose();
+            _deviceLease = null;
             Volatile.Write(ref _health, new(false, false, ex.Message, _clock.UtcNow));
             throw;
         }
@@ -108,6 +115,8 @@ public sealed class VendorReaderAdapter : IReaderAdapter
         {
             _handle?.Dispose();
             _handle = null;
+            _deviceLease?.Dispose();
+            _deviceLease = null;
             Volatile.Write(ref _health, new(false, false, null, _clock.UtcNow));
         }
         finally { _lifecycle.Release(); }

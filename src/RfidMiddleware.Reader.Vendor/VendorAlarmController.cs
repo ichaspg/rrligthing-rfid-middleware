@@ -5,7 +5,8 @@ namespace RfidMiddleware.Reader.Vendor;
 
 public sealed class VendorAlarmController(VendorReaderAdapter reader, IClock clock, VendorReaderOptions options) : IAlarmController, IAsyncDisposable
 {
-    private const int AlarmDigitalOutput = 0;
+    private const int DigitalOutput0 = 0;
+    private const int DigitalOutput1 = 1;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private CancellationTokenSource? _pulseCancellation;
     private Task _pulseTask = Task.CompletedTask;
@@ -20,8 +21,7 @@ public sealed class VendorAlarmController(VendorReaderAdapter reader, IClock clo
         try
         {
             CancelPulse();
-            EnsureSuccess(NativeMethods.SetRelayStatus(reader.Handle, AlarmDigitalOutput, NativeRelayStatus.Closed),
-                "digital output 0 off");
+            SetAlarm(active: false);
             Volatile.Write(ref _health, new(true, false, null, clock.UtcNow));
         }
         finally { _gate.Release(); }
@@ -33,12 +33,11 @@ public sealed class VendorAlarmController(VendorReaderAdapter reader, IClock clo
         try
         {
             CancelPulse();
-            EnsureSuccess(NativeMethods.SetRelayStatus(reader.Handle, AlarmDigitalOutput, NativeRelayStatus.Open),
-                "digital output 0 on");
-            Volatile.Write(ref _health, new(true, true, null, clock.UtcNow));
             var pulse = new CancellationTokenSource();
             _pulseCancellation = pulse;
             _pulseTask = TurnOffAfterPulseAsync(pulse);
+            SetAlarm(active: true);
+            Volatile.Write(ref _health, new(true, true, null, clock.UtcNow));
         }
         catch (Exception ex)
         {
@@ -60,17 +59,16 @@ public sealed class VendorAlarmController(VendorReaderAdapter reader, IClock clo
             try
             {
                 if (!ReferenceEquals(_pulseCancellation, pulse)) return;
-                EnsureSuccess(NativeMethods.SetRelayStatus(reader.Handle, AlarmDigitalOutput, NativeRelayStatus.Closed),
-                    "digital output 0 off");
-                Volatile.Write(ref _health, new(true, false, null, clock.UtcNow));
                 _pulseCancellation = null;
+                SetAlarm(active: false);
+                Volatile.Write(ref _health, new(true, false, null, clock.UtcNow));
             }
             finally { _gate.Release(); }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            Volatile.Write(ref _health, new(false, true, ex.Message, clock.UtcNow));
+            Volatile.Write(ref _health, new(false, false, ex.Message, clock.UtcNow));
         }
         finally
         {
@@ -80,13 +78,51 @@ public sealed class VendorAlarmController(VendorReaderAdapter reader, IClock clo
 
     private void CancelPulse()
     {
-        _pulseCancellation?.Cancel();
-        _pulseCancellation = null;
+        var pulse = Interlocked.Exchange(ref _pulseCancellation, null);
+        if (pulse is null) return;
+        try { pulse.Cancel(); }
+        catch (ObjectDisposedException) { }
     }
 
-    private static void EnsureSuccess(int result, string operation)
+    private void SetAlarm(bool active)
     {
-        if (result != 0) throw new InvalidOperationException($"RFID SDK {operation} failed with code {result}.");
+        var failures = new List<string>();
+        switch (options.AlarmMode)
+        {
+            case VendorAlarmMode.Buzzer:
+                TrySetBuzzer(active, failures);
+                break;
+            case VendorAlarmMode.DigitalOutput0:
+                TrySetDigitalOutput(DigitalOutput0, active, failures);
+                break;
+            case VendorAlarmMode.DigitalOutput1:
+                TrySetDigitalOutput(DigitalOutput1, active, failures);
+                break;
+            case VendorAlarmMode.BuzzerAndDigitalOutputs:
+                TrySetBuzzer(active, failures);
+                TrySetDigitalOutput(DigitalOutput0, active, failures);
+                TrySetDigitalOutput(DigitalOutput1, active, failures);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(options.AlarmMode), options.AlarmMode,
+                    "Unsupported vendor alarm mode.");
+        }
+
+        if (failures.Count > 0)
+            throw new InvalidOperationException($"RFID SDK alarm channel failures: {string.Join("; ", failures)}.");
+    }
+
+    private void TrySetBuzzer(bool active, ICollection<string> failures) => TrySetChannel(
+        NativeMethods.SetBuzz(reader.Handle, active ? NativeBuzzerStatus.On : NativeBuzzerStatus.Off),
+        $"reader buzzer {(active ? "on" : "off")}", failures);
+
+    private void TrySetDigitalOutput(int output, bool active, ICollection<string> failures) => TrySetChannel(
+        NativeMethods.SetRelayStatus(reader.Handle, output, active ? NativeRelayStatus.Open : NativeRelayStatus.Closed),
+        $"digital output {output} {(active ? "on" : "off")}", failures);
+
+    private static void TrySetChannel(int result, string operation, ICollection<string> failures)
+    {
+        if (result != 0) failures.Add($"{operation} failed with code {result}");
     }
 
     public async ValueTask DisposeAsync()
