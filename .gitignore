@@ -12,8 +12,9 @@ artifacts/
 *.nupkg
 *.deb
 .env
-.env.local
+.env.*
 !.env.example
+!.env.production.example
 logs/
 tools/RfidMiddleware.MockServer/data/
 linux/arm64/

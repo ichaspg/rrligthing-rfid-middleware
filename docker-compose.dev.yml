@@ -1,0 +1,52 @@
+services:
+  postgres:
+    environment:
+      POSTGRES_DB: rfid_backend
+      POSTGRES_USER: rfid
+      POSTGRES_PASSWORD: rfid-dev-password
+    volumes:
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+
+  mock-backend:
+    build:
+      context: .
+      target: mock-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["--reset", "--seed-count", "${RFID_DEV_SEED_COUNT:-100}"]
+    environment:
+      ConnectionStrings__MockServer: Host=postgres;Port=5432;Database=rfid_backend;Username=rfid;Password=rfid-dev-password
+      ASPNETCORE_URLS: http://0.0.0.0:5080
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    ports:
+      - "127.0.0.1:${RFID_DEV_BACKEND_PORT:-5080}:5080"
+    restart: on-failure
+    networks:
+      - rfid-internal
+
+  middleware:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mock-backend:
+        condition: service_healthy
+    environment:
+      RFID_Id: WH-A-GATE-01
+      RFID_API_TOKEN: dev-token
+      RFID_DatabaseConnectionString: Host=postgres;Port=5432;Database=rfid_edge;Username=rfid;Password=rfid-dev-password
+      RFID_Server__BaseUrl: http://mock-backend:5080
+      RFID_ReaderMode: ManagedFake

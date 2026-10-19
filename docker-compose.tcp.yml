@@ -1,0 +1,7 @@
+services:
+  middleware:
+    environment:
+      RFID_ReaderMode: Vendor
+      RFID_VendorReader__Transport: Tcp
+      RFID_VendorReader__Address: ${RFID_READER_ADDRESS:?Set RFID_READER_ADDRESS to the reader IP}
+      RFID_VendorReader__Port: ${RFID_READER_PORT:-1969}

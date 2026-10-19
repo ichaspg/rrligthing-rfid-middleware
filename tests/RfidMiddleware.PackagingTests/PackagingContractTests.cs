@@ -44,6 +44,32 @@ public sealed class PackagingContractTests
         Assert.Contains("patchelf --set-rpath '$ORIGIN'", script, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void DockerImageIsNonRootAndChecksNativeDependencies()
+    {
+        var dockerfile = File.ReadAllText(Path.Combine(Root, "Dockerfile"));
+        Assert.Contains("AS middleware", dockerfile, StringComparison.Ordinal);
+        Assert.Contains("AS mock-backend", dockerfile, StringComparison.Ordinal);
+        Assert.Contains("aspnet:8.0-noble", dockerfile, StringComparison.Ordinal);
+        Assert.Contains("patchelf --set-rpath '$ORIGIN'", dockerfile, StringComparison.Ordinal);
+        Assert.Contains("ldd /out/middleware/native/librfid.so", dockerfile, StringComparison.Ordinal);
+        Assert.Contains("USER rfid-middleware:rfid-middleware", dockerfile, StringComparison.Ordinal);
+        Assert.Contains("\"healthcheck\"", dockerfile, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ShippingComposeExcludesMockBackendAndDevelopmentOverrideAddsIt()
+    {
+        var shipping = File.ReadAllText(Path.Combine(Root, "docker-compose.yml"));
+        var development = File.ReadAllText(Path.Combine(Root, "docker-compose.dev.yml"));
+        Assert.DoesNotContain("mock-backend", shipping, StringComparison.Ordinal);
+        Assert.DoesNotContain("dev-token", shipping, StringComparison.Ordinal);
+        Assert.Contains("mock-backend:", development, StringComparison.Ordinal);
+        Assert.Contains("target: mock-backend", development, StringComparison.Ordinal);
+        Assert.Contains("RFID_API_TOKEN: dev-token", development, StringComparison.Ordinal);
+        Assert.Contains("RFID_ReaderMode: ManagedFake", development, StringComparison.Ordinal);
+    }
+
     private static string FindRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

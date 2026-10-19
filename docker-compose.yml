@@ -2,19 +2,62 @@ services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: rfid_backend
-      POSTGRES_USER: rfid
-      POSTGRES_PASSWORD: rfid-dev-password
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: rfid_edge
+      POSTGRES_USER: ${RFID_DATABASE_USER:-rfid}
+      POSTGRES_PASSWORD: ${RFID_DATABASE_PASSWORD:?Set RFID_DATABASE_PASSWORD in the selected environment file}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U rfid -d rfid_backend"]
-      interval: 2s
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
       timeout: 3s
-      retries: 15
+      retries: 20
+    restart: unless-stopped
     volumes:
       - rfid-postgres-data:/var/lib/postgresql/data
-      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - rfid-internal
+
+  middleware:
+    build:
+      context: .
+      target: middleware
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RFID_Id: ${RFID_MIDDLEWARE_ID:-WH-A-GATE-01}
+      RFID_API_TOKEN: ${RFID_API_TOKEN:?Set RFID_API_TOKEN in the selected environment file}
+      RFID_DatabaseConnectionString: Host=postgres;Port=5432;Database=rfid_edge;Username=${RFID_DATABASE_USER:-rfid};Password=${RFID_DATABASE_PASSWORD:?Set RFID_DATABASE_PASSWORD in the selected environment file}
+      RFID_ControlSocket: /run/rfid-middleware/control.sock
+      RFID_Server__BaseUrl: ${RFID_SERVER_BASE_URL:?Set RFID_SERVER_BASE_URL in the selected environment file}
+      RFID_ReaderMode: ${RFID_READER_MODE:-Vendor}
+      RFID_VendorReader__Transport: ${RFID_READER_TRANSPORT:-Tcp}
+      RFID_VendorReader__Address: ${RFID_READER_ADDRESS:-192.168.1.223}
+      RFID_VendorReader__Port: ${RFID_READER_PORT:-1969}
+      RFID_VendorReader__SerialDevice: ${RFID_SERIAL_CONTAINER_DEVICE:-/dev/rfid-reader}
+      RFID_VendorReader__Baud: ${RFID_READER_BAUD:-115200}
+      RFID_VendorReader__Rs485Address: ${RFID_READER_RS485_ADDRESS:-0}
+      RFID_NATIVE_DIR: /app/native
+      LD_LIBRARY_PATH: /app/native
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    volumes:
+      - rfid-middleware-runtime:/run/rfid-middleware
+      - rfid-middleware-data:/var/lib/rfid-middleware
+    restart: unless-stopped
+    networks:
+      - rfid-internal
+
+networks:
+  rfid-internal:
+    driver: bridge
 
 volumes:
   rfid-postgres-data:
+  rfid-middleware-runtime:
+  rfid-middleware-data:

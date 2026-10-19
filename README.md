@@ -60,7 +60,7 @@ Development uses two databases in one PostgreSQL container:
 
 ## Development environment
 
-The supported development environment is Ubuntu 24.04 or WSL2 Ubuntu 24.04 with the .NET 10 SDK. The application itself targets .NET 8 LTS; the newer SDK is required for the `.slnx` solution format. Install `build-essential`, `postgresql-client`, `valgrind`, `strace`, `lsof`, and `patchelf`. The vendor libraries live in `linux/x86_64/release` and are copied to `native/` during build and publish. WSL supports managed tests, the SDK mock, TCP readers, and USB serial readers passed through with `usbipd`; final relay and antenna acceptance must still be performed with the physical hardware.
+The supported development environment is Ubuntu 24.04 or WSL2 Ubuntu 24.04 with the .NET 10 SDK plus the .NET/ASP.NET Core 8 runtime. The application itself targets .NET 8 LTS; the newer SDK is required for the `.slnx` solution format. Install `build-essential`, `postgresql-client`, `valgrind`, `strace`, `lsof`, and `patchelf`. The vendor libraries live in `linux/x86_64/release` and are copied to `native/` during build and publish. WSL supports managed tests, the SDK mock, TCP readers, and USB serial readers passed through with `usbipd`; final relay and antenna acceptance must still be performed with the physical hardware.
 
 Copy and load the development environment, then start PostgreSQL:
 
@@ -97,6 +97,89 @@ The development control socket is under `/tmp` because Unix sockets cannot be cr
 The mock backend supports manifest activation and fault injection. See `fixtures/README.md` and `fixtures/scenarios.json` for deterministic payloads, fault names, and the 100,000-EPC reset command.
 Both persistence layers use PostgreSQL. `rfid_edge` is private to the middleware and stores its cached manifest plus local-only scan audit. `rfid_backend` stores server manifests and revocation audit. Only manifest requests are sent from middleware to server; EPC scan observations are not uploaded.
 
+## Docker
+
+The image requires a Linux x86-64 Docker host. It contains the Ubuntu 24.04-compatible vendor libraries and runs as a non-root user.
+
+### Development stack with mock backend
+
+The development override adds the mock backend, creates both PostgreSQL databases, generates an active manifest, and uses the managed fake reader:
+
+```bash
+docker compose -p rfid-dev \
+  --env-file docker/dev.env \
+  -f docker-compose.yml \
+  -f docker-compose.dev.yml \
+  up -d --build
+```
+
+Inspect it with:
+
+```bash
+docker compose -p rfid-dev --env-file docker/dev.env -f docker-compose.yml -f docker-compose.dev.yml ps
+docker compose -p rfid-dev --env-file docker/dev.env -f docker-compose.yml -f docker-compose.dev.yml logs -f middleware
+docker compose -p rfid-dev --env-file docker/dev.env -f docker-compose.yml -f docker-compose.dev.yml \
+  exec middleware /app/rfid-middleware status --config /app/appsettings.json
+docker compose -p rfid-dev --env-file docker/dev.env -f docker-compose.yml -f docker-compose.dev.yml \
+  exec middleware /app/rfid-middleware manifest status --config /app/appsettings.json
+docker compose -p rfid-dev --env-file docker/dev.env -f docker-compose.yml -f docker-compose.dev.yml \
+  exec middleware /app/rfid-middleware audit stats --config /app/appsettings.json
+```
+
+The mock mobile API is available only on `http://127.0.0.1:5080`. Change the generated manifest size with `RFID_DEV_SEED_COUNT`. Stop the development stack without deleting its database:
+
+```bash
+docker compose -p rfid-dev --env-file docker/dev.env -f docker-compose.yml -f docker-compose.dev.yml down
+```
+
+Add `--volumes` only when the development data should be permanently deleted.
+
+### Real reader in Docker
+
+For a TCP reader, append the TCP override after the development override:
+
+```bash
+export RFID_READER_ADDRESS=192.168.1.223
+docker compose -p rfid-dev \
+  --env-file docker/dev.env \
+  -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.tcp.yml \
+  up -d --build
+```
+
+For USB serial on Ubuntu, attach the device to the VM first, then use its stable path and the host `dialout` group ID:
+
+```bash
+export RFID_SERIAL_DEVICE=/dev/serial/by-id/REPLACE_WITH_READER_ID
+export RFID_DIALOUT_GID="$(getent group dialout | cut -d: -f3)"
+docker compose -p rfid-dev \
+  --env-file docker/dev.env \
+  -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.serial.yml \
+  up -d --build
+```
+
+The serial override maps the selected device to `/dev/rfid-reader` in the container. Unauthorized observations still pulse only digital output 0.
+
+### Ship without the mock backend
+
+Copy the production template and replace every placeholder:
+
+```bash
+cp .env.production.example .env.production
+chmod 600 .env.production
+```
+
+Stop the development project, then start a separately named production project using **only** the base Compose file:
+
+```bash
+docker compose -p rfid-dev --env-file docker/dev.env -f docker-compose.yml -f docker-compose.dev.yml down
+docker compose -p rfid-prod --env-file .env.production -f docker-compose.yml config
+docker compose -p rfid-prod --env-file .env.production -f docker-compose.yml up -d --build
+```
+
+Never include `docker-compose.dev.yml` in a shipment. When that file is omitted, no mock-backend service, development token, generated backend manifest, or `rfid_backend` database is created. The middleware contacts only `RFID_SERVER_BASE_URL` using `RFID_API_TOKEN`. Verify the rendered `config` output contains the intended real URL, middleware ID, reader address, and no `mock-backend` service before starting.
+
+For production serial mode, append `-f docker-compose.serial.yml`; for TCP mode, the base file already defaults to `Vendor`/`Tcp`, and `docker-compose.tcp.yml` can be appended to require an explicit reader address.
+
 ## Real hardware quick reference
 
 The committed native SDK is the Linux x86-64 build under `linux/x86_64/release`. For a USB serial reader, first obtain its current bus ID instead of assuming it is permanent. Windows exposes the adapter to WSL using `usbipd`, after which the middleware normally uses `/dev/ttyUSB0` or a stable `/dev/serial/by-id/...` path.
@@ -117,6 +200,7 @@ The real test tags are:
 ```text
 rfid-middleware run --config <file>
 rfid-middleware status [--json]
+rfid-middleware healthcheck
 rfid-middleware version
 rfid-middleware reader test
 rfid-middleware reader watch --duration <seconds>
@@ -185,6 +269,8 @@ tests/                              Unit, integration, E2E, native and packaging
 fixtures/                           Deterministic manifests and scenarios
 linux/x86_64/release                Vendor Linux x86-64 SDK files
 packaging/                          DEB and systemd configuration
+Dockerfile                         Middleware and development-backend image targets
+docker-compose*.yml                Shipping, development, TCP, and serial definitions
 ```
 
 ## Production notes

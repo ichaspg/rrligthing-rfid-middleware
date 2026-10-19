@@ -1,0 +1,12 @@
+services:
+  middleware:
+    environment:
+      RFID_ReaderMode: Vendor
+      RFID_VendorReader__Transport: Serial
+      RFID_VendorReader__SerialDevice: /dev/rfid-reader
+      RFID_VendorReader__Baud: ${RFID_READER_BAUD:-115200}
+      RFID_VendorReader__Rs485Address: ${RFID_READER_RS485_ADDRESS:-0}
+    devices:
+      - "${RFID_SERIAL_DEVICE:?Set RFID_SERIAL_DEVICE to a stable /dev/serial/by-id path}:/dev/rfid-reader"
+    group_add:
+      - "${RFID_DIALOUT_GID:-20}"
