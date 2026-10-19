@@ -248,7 +248,7 @@ For production serial mode, append `-f docker-compose.serial.yml`; for TCP mode,
 
 ## Real hardware quick reference
 
-For a complete non-Docker Ubuntu server procedure, including the exact two-tag manifest, BAFO commissioning, serial/TCP execution, buzzer testing, SQL audit checks, systemd, and Docker verification, use [docs/SERVER_DIRECT_HARDWARE_TEST.md](docs/SERVER_DIRECT_HARDWARE_TEST.md).
+For the complete non-Docker Ubuntu server procedure, including the exact two-tag manifest, BAFO commissioning, serial/TCP execution, buzzer testing, SQL audit checks, systemd, Docker verification, and mobile handover, use [docs/COMPLETE_OPERATIONS_AND_INTEGRATION_GUIDE.md](docs/COMPLETE_OPERATIONS_AND_INTEGRATION_GUIDE.md).
 
 The committed native SDK is the Linux x86-64 build under `linux/x86_64/release`. For a USB serial reader, first obtain its current bus ID instead of assuming it is permanent. Windows exposes the adapter to WSL using `usbipd`, after which the middleware normally uses `/dev/ttyUSB0` or a stable `/dev/serial/by-id/...` path.
 
