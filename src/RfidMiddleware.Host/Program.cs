@@ -181,6 +181,8 @@ static void ValidateOptions(MiddlewareOptions value)
     if (string.IsNullOrWhiteSpace(value.ReaderLockFile)) throw new InvalidDataException("ReaderLockFile is required.");
     if (string.IsNullOrWhiteSpace(value.CommissioningBackupDirectory)) throw new InvalidDataException("CommissioningBackupDirectory is required.");
     if (value.DedupWindowMilliseconds is < 100 or > 60_000) throw new InvalidDataException("DedupWindowMilliseconds is invalid.");
+    if (value.VendorReader.AntennaPower is < 1 or > 33)
+        throw new InvalidDataException("VendorReader.AntennaPower must be between 1 and 33 dBm when configured.");
     if (!Uri.TryCreate(value.Server.BaseUrl, UriKind.Absolute, out _)) throw new InvalidDataException("Server BaseUrl is invalid.");
 }
 

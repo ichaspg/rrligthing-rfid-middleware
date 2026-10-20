@@ -29,7 +29,7 @@ public sealed class PackagingContractTests
         Assert.Equal("/var/lib/rfid-middleware/commissioning",
             json.RootElement.GetProperty("CommissioningBackupDirectory").GetString());
         Assert.StartsWith("/dev/serial/by-id/", json.RootElement.GetProperty("VendorReader").GetProperty("SerialDevice").GetString(), StringComparison.Ordinal);
-        Assert.Equal("BuzzerAndDigitalOutputs",
+        Assert.Equal("BuzzerAndDigitalOutput1",
             json.RootElement.GetProperty("VendorReader").GetProperty("AlarmMode").GetString());
         Assert.False(json.RootElement.GetProperty("VendorReader").TryGetProperty("RelayNumber", out _));
     }
@@ -73,7 +73,7 @@ public sealed class PackagingContractTests
         Assert.Contains("target: mock-backend", development, StringComparison.Ordinal);
         Assert.Contains("RFID_API_TOKEN: dev-token", development, StringComparison.Ordinal);
         Assert.Contains("RFID_ReaderMode: ManagedFake", development, StringComparison.Ordinal);
-        Assert.Contains("RFID_VendorReader__AlarmMode: ${RFID_READER_ALARM_MODE:-BuzzerAndDigitalOutputs}", shipping,
+        Assert.Contains("RFID_VendorReader__AlarmMode: ${RFID_READER_ALARM_MODE:-BuzzerAndDigitalOutput1}", shipping,
             StringComparison.Ordinal);
     }
 

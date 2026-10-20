@@ -1,12 +1,12 @@
 # RFID Transport Validation Middleware
 
-For a single end-to-end handover covering installation, every CLI command, Docker and systemd deployment, WSL/VirtualBox USB, BAFO commissioning, permanent LAN operation, alarm outputs, hardware acceptance, the mobile API, and troubleshooting, use [docs/COMPLETE_OPERATIONS_AND_INTEGRATION_GUIDE.md](docs/COMPLETE_OPERATIONS_AND_INTEGRATION_GUIDE.md).
+For the complete HTTP contract, request and response schemas, status codes, idempotency rules, and local Unix-socket endpoints, use [docs/API.md](docs/API.md). For a single end-to-end handover covering installation, every CLI command, Docker and systemd deployment, WSL/VirtualBox USB, BAFO commissioning, permanent LAN operation, alarm outputs, hardware acceptance, mobile integration, and troubleshooting, use [docs/COMPLETE_OPERATIONS_AND_INTEGRATION_GUIDE.md](docs/COMPLETE_OPERATIONS_AND_INTEGRATION_GUIDE.md).
 
 .NET 8 LTS command-line service for Ubuntu 24.04 x86-64. It validates RFID EPC observations against a durable mobile-controlled manifest, operates offline, and raises the configured reader alarm only for tags that cannot be authorized. Scan data remains in the middleware's local PostgreSQL database and is never uploaded to the server.
 
 ## Purpose
 
-The middleware sits between an RFID reader and a transport-management backend. It downloads a versioned authorization manifest, validates tags locally with low latency, and operates during backend outages. Temporary hardware-setup mode attempts the built-in buzzer plus digital outputs 0 and 1 for every unauthorized observation; technical faults are exposed through health, metrics, and logs.
+The middleware sits between an RFID reader and a transport-management backend. It downloads a versioned authorization manifest, validates tags locally with low latency, and operates during backend outages. Temporary hardware-setup mode attempts the built-in buzzer plus digital output 1 for every unauthorized observation; technical faults are exposed through health, metrics, and logs.
 
 The supported operational flow is:
 
@@ -33,7 +33,7 @@ mobile completes batch → middleware clears active authorization
 - EPC normalization, multi-antenna aggregation, and configurable duplicate window.
 - Immutable, monotonically increasing manifest versions with atomic activation.
 - Fail-closed validation for missing or expired manifests and persistence failures.
-- The configured alarm pulses only for tags that are unauthorized, invalid, or observed without a valid manifest. `BuzzerAndDigitalOutputs` is the temporary hardware-setup default and attempts the buzzer, output 0, and output 1 independently.
+- The configured alarm pulses only for tags that are unauthorized, invalid, or observed without a valid manifest. `BuzzerAndDigitalOutput1` is the hardware-setup default and attempts the buzzer and output 1 independently. Output 0 is intentionally unused.
 - Critical health, metrics, and structured logs for reader, database, queue, and synchronization faults.
 - PostgreSQL persistence for both the local middleware and test backend.
 - Idempotent mobile revocation requests with a durable backend audit.
@@ -50,7 +50,7 @@ Mobile app ── authorize/revoke/complete ──► backend API ──► rfid
                                            ▼
 RFID reader ── native SDK ──► middleware ──► rfid_edge PostgreSQL
                                   │             local scans only
-                                  └──► buzzer + outputs 0/1 (temporary setup)
+                                  └──► buzzer + digital output 1
 ```
 
 Development uses two databases in one PostgreSQL container:
@@ -159,7 +159,7 @@ docker compose -p rfid-dev \
   up -d --build
 ```
 
-The serial override maps the selected device to `/dev/rfid-reader` in the container. Unauthorized observations pulse the configured alarm; temporary setup mode attempts the built-in buzzer and digital outputs 0 and 1.
+The serial override maps the selected device to `/dev/rfid-reader` in the container. Unauthorized observations pulse the configured alarm; setup mode attempts the built-in buzzer and digital output 1.
 
 ### Commission a reader over BAFO USB-to-RS-232
 
@@ -265,7 +265,7 @@ The current physical acceptance tags are:
 
 Nearby EPC `E280689400004010BF78D96A` was intentionally excluded and correctly detected as unauthorized during the October 19, 2026 COM11 test.
 
-The tested VM-6x V9.4 reader (`SW 1.1.31-GD`) previously returned SDK error `-3034` (`The relay is not supported`) for digital output 0. `VendorReader.AlarmMode` now defaults to `BuzzerAndDigitalOutputs` so the hardware team can configure and test the built-in buzzer plus outputs 0 and 1. A failure on one output does not prevent attempts on the other channels, scan auditing, or continued inventory; it does keep alarm health critical.
+The tested VM-6x V9.4 reader (`SW 1.1.31-GD`) returned SDK error `-3034` (`The relay is not supported`) for digital output 0. Output 0 is therefore intentionally unused. `VendorReader.AlarmMode` defaults to `BuzzerAndDigitalOutput1`, which independently attempts the built-in buzzer and digital output 1. A failure on one channel does not prevent the other channel, scan auditing, or continued inventory; it does keep alarm health critical.
 
 ## CLI
 
@@ -314,7 +314,7 @@ Use `.env.example` for WSL development and `packaging/environment.example` for a
 - `RFID_VendorReader__SerialDevice`
 - `RFID_VendorReader__Baud`
 - `RFID_VendorReader__Rs485Address`
-- `RFID_VendorReader__AlarmMode` (`BuzzerAndDigitalOutputs` during setup; individual `Buzzer`, `DigitalOutput0`, or `DigitalOutput1` modes are also supported)
+- `RFID_VendorReader__AlarmMode` (`BuzzerAndDigitalOutput1` by default; individual `Buzzer` or `DigitalOutput1` modes are also supported; output 0 is unused)
 - `RFID_VendorReader__AlarmPulseMilliseconds`
 - `RFID_NATIVE_DIR`
 - `LD_LIBRARY_PATH`
@@ -360,7 +360,7 @@ docker-compose*.yml                Shipping, development, TCP, and serial defini
 - Use a stable `/dev/serial/by-id/...` path instead of `/dev/ttyUSB0` in production.
 - Set a strong PostgreSQL password and a production bearer token outside `appsettings.json`.
 - Require TLS for communication with the production backend.
-- Verify the selected alarm channels and pulse timing, enabled antennas, baud/address, and reader firmware on physical hardware. Setup mode is `BuzzerAndDigitalOutputs`; select the final single channel only after wiring acceptance.
+- Verify the selected alarm channels and pulse timing, enabled antennas, baud/address, and reader firmware on physical hardware. Setup mode is `BuzzerAndDigitalOutput1`; select the final single channel only after wiring acceptance.
 - Run the release soak and native lifecycle tests before deployment.
 
 ## Operational paths

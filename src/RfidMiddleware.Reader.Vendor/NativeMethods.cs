@@ -58,6 +58,18 @@ internal static unsafe partial class NativeMethods
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int StopListenAutoRead(int handle);
 
+    [LibraryImport(LibraryName, EntryPoint = "get_ant_count")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int GetAntennaCount(int handle, out int count);
+
+    [LibraryImport(LibraryName, EntryPoint = "set_power")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int SetPower(int handle, int antenna, int power);
+
+    [LibraryImport(LibraryName, EntryPoint = "get_power")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int GetPower(int handle, int antenna, out int power);
+
     [LibraryImport(LibraryName, EntryPoint = "set_relay_status")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int SetRelayStatus(int handle, int output, NativeRelayStatus status);

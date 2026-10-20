@@ -5,7 +5,6 @@ namespace RfidMiddleware.Reader.Vendor;
 
 public sealed class VendorAlarmController(VendorReaderAdapter reader, IClock clock, VendorReaderOptions options) : IAlarmController, IAsyncDisposable
 {
-    private const int DigitalOutput0 = 0;
     private const int DigitalOutput1 = 1;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private CancellationTokenSource? _pulseCancellation;
@@ -92,15 +91,11 @@ public sealed class VendorAlarmController(VendorReaderAdapter reader, IClock clo
             case VendorAlarmMode.Buzzer:
                 TrySetBuzzer(active, failures);
                 break;
-            case VendorAlarmMode.DigitalOutput0:
-                TrySetDigitalOutput(DigitalOutput0, active, failures);
-                break;
             case VendorAlarmMode.DigitalOutput1:
                 TrySetDigitalOutput(DigitalOutput1, active, failures);
                 break;
-            case VendorAlarmMode.BuzzerAndDigitalOutputs:
+            case VendorAlarmMode.BuzzerAndDigitalOutput1:
                 TrySetBuzzer(active, failures);
-                TrySetDigitalOutput(DigitalOutput0, active, failures);
                 TrySetDigitalOutput(DigitalOutput1, active, failures);
                 break;
             default:

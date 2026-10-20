@@ -38,7 +38,8 @@ services:
       RFID_VendorReader__SerialDevice: ${RFID_SERIAL_CONTAINER_DEVICE:-/dev/rfid-reader}
       RFID_VendorReader__Baud: ${RFID_READER_BAUD:-115200}
       RFID_VendorReader__Rs485Address: ${RFID_READER_RS485_ADDRESS:-0}
-      RFID_VendorReader__AlarmMode: ${RFID_READER_ALARM_MODE:-BuzzerAndDigitalOutputs}
+      RFID_VendorReader__AntennaPower: ${RFID_READER_ANTENNA_POWER:-}
+      RFID_VendorReader__AlarmMode: ${RFID_READER_ALARM_MODE:-BuzzerAndDigitalOutput1}
       RFID_NATIVE_DIR: /app/native
       LD_LIBRARY_PATH: /app/native
     init: true

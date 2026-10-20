@@ -98,11 +98,10 @@ Supported values are:
 | Value | Action for an unauthorized observation |
 |---|---|
 | `Buzzer` | Pulse only the reader's built-in buzzer |
-| `DigitalOutput0` | Pulse reader digital output 0 |
 | `DigitalOutput1` | Pulse reader digital output 1 |
-| `BuzzerAndDigitalOutputs` | Attempt buzzer, output 0, and output 1 independently |
+| `BuzzerAndDigitalOutput1` | Attempt the buzzer and output 1 independently |
 
-`BuzzerAndDigitalOutputs` is the temporary hardware setup default. If one channel fails or is unsupported, the middleware still attempts the other channels and continues processing and auditing scans. The failed channel leaves alarm health critical and is reported in `alarm.error` and logs. Shutoff is scheduled before the combined error is raised, preventing a successfully activated channel from being left on.
+`BuzzerAndDigitalOutput1` is the hardware setup default. Digital output 0 is intentionally unused because the tested reader reports it as unsupported. If the buzzer or output 1 fails, the middleware still attempts the other channel and continues processing and auditing scans. The failed channel leaves alarm health critical and is reported in `alarm.error` and logs. Shutoff is scheduled before the combined error is raised, preventing a successfully activated channel from being left on.
 
 The default pulse is 1,000 milliseconds. Configure it with `RFID_VendorReader__AlarmPulseMilliseconds` outside Docker or the corresponding JSON setting. Docker currently exposes the mode as `RFID_READER_ALARM_MODE`; pulse duration can be supplied directly as `RFID_VendorReader__AlarmPulseMilliseconds` in an additional Compose environment override.
 
@@ -112,9 +111,9 @@ Hardware safety:
 - Start with a multimeter or vendor-approved low-current test load.
 - Do not connect a siren, lamp, relay coil, or mains circuit directly unless its electrical requirements are within the reader output rating.
 - Use an external interposing relay, suppression diode, and separate supply where required.
-- Test outputs 0 and 1 individually after combined discovery, then choose the final installed channel.
+- Test the buzzer and output 1 individually after combined discovery, then choose the final installed channel.
 
-The previously tested VM-6x V9.4 reader (`SW 1.1.31-GD`) returned SDK error `-3034` for output 0, meaning the relay was unsupported or not configured. This is a hardware/configuration result, not an authorization failure. The built-in buzzer and output 1 must be verified on the actual unit.
+The previously tested VM-6x V9.4 reader (`SW 1.1.31-GD`) returned SDK error `-3034` for output 0, meaning the relay was unsupported or not configured. Output 0 has been removed from middleware alarm modes. The built-in buzzer and output 1 must be verified on the actual unit.
 
 ## 5. Current hardware acceptance EPCs
 
@@ -260,13 +259,99 @@ Environment variables use the `RFID_` prefix. Nested JSON keys use double unders
 | `RFID_VendorReader__SerialDevice` / `RFID_SERIAL_DEVICE` | BAFO/reader device | `/dev/serial/by-id/...` |
 | `RFID_VendorReader__Baud` / `RFID_READER_BAUD` | Serial speed | `115200` |
 | `RFID_VendorReader__Rs485Address` / `RFID_READER_RS485_ADDRESS` | Reader bus address | `0` |
+| `RFID_VendorReader__AntennaPower` / `RFID_READER_ANTENNA_POWER` | RF power applied to every detected antenna at reader connection; optional, `1-33` dBm | `10` for close-range bench testing |
 | `RFID_VendorReader__TimeoutMilliseconds` | SDK operation timeout | `6000` |
-| `RFID_VendorReader__AlarmMode` / `RFID_READER_ALARM_MODE` | Alarm channel | `BuzzerAndDigitalOutputs` |
+| `RFID_VendorReader__AlarmMode` / `RFID_READER_ALARM_MODE` | Alarm channel | `BuzzerAndDigitalOutput1` |
 | `RFID_VendorReader__AlarmPulseMilliseconds` | Pulse duration | `1000` |
 | `RFID_NATIVE_DIR` | Vendor native library directory | `/app/native` or repository SDK path |
 | `LD_LIBRARY_PATH` | Native loader directory | same as native directory |
 
 The plain application environment names and the Compose convenience names are not interchangeable unless the Compose file maps them. Follow the examples for the selected deployment method.
+
+### Reader settings that can be configured
+
+| Function | Setting | Allowed values / notes | Restart needed |
+|---|---|---|---|
+| Connection type | `RFID_READER_TRANSPORT` | `Serial`, `Tcp`, or `NativeMock` | Yes |
+| Serial device | `RFID_SERIAL_DEVICE` | Linux device such as `/dev/ttyUSB0` or preferably `/dev/serial/by-id/...` | Recreate container |
+| Serial speed | `RFID_READER_BAUD` | Normally `115200` | Recreate container |
+| Reader bus address | `RFID_READER_RS485_ADDRESS` | Normally `0` for direct RS-232 commissioning | Recreate container |
+| Reader LAN address | `RFID_READER_ADDRESS` | Static private IPv4 assigned to the reader | Recreate container |
+| Reader LAN port | `RFID_READER_PORT` | `1-65535`; normally `1969` | Recreate container |
+| Antenna RF power | `RFID_READER_ANTENNA_POWER` | Optional integer `1-33` dBm; applied to all detected antennas and verified by read-back | Reconnect/recreate |
+| Alarm output | `RFID_READER_ALARM_MODE` | `Buzzer`, `DigitalOutput1`, or `BuzzerAndDigitalOutput1` | Recreate container |
+| Alarm pulse | `RFID_VendorReader__AlarmPulseMilliseconds` | Milliseconds; direct app setting unless added to a Compose override | Restart/recreate |
+| Middleware identity | `RFID_MIDDLEWARE_ID` | Must match the backend assignment | Recreate container |
+| Backend | `RFID_SERVER_BASE_URL` | Real HTTPS backend, or mock backend in development only | Recreate container |
+| Backend token | `RFID_API_TOKEN` | Middleware-role bearer token | Recreate container |
+
+The middleware does not currently expose a live command that changes antenna power while inventory is running. Changing power reconnects the reader so that the configured value can be applied and read back. If the power setting is omitted, middleware leaves the power already stored in the reader unchanged. Omitting it does **not** restore an earlier value after a power value has already been applied; set the desired normal value explicitly.
+
+### Antenna power commands
+
+PowerShell, from the repository root, for the current serial development stack:
+
+```powershell
+$env:RFID_SERIAL_DEVICE='/dev/ttyUSB0'
+$env:RFID_DIALOUT_GID='20'
+$env:RFID_READER_ANTENNA_POWER='10'
+$env:RFID_READER_ALARM_MODE='BuzzerAndDigitalOutput1'
+
+docker compose -p rfid-dev `
+  --env-file docker/dev.env `
+  -f docker-compose.yml `
+  -f docker-compose.dev.yml `
+  -f docker-compose.serial.yml `
+  up -d --build --force-recreate middleware
+
+docker compose -p rfid-dev `
+  --env-file docker/dev.env `
+  -f docker-compose.yml `
+  -f docker-compose.dev.yml `
+  -f docker-compose.serial.yml `
+  logs --tail 100 middleware
+```
+
+Look for `Configured <count> reader antennas to 10 dBm`. A missing confirmation or read-back error means the requested value was not verified. Suggested bench values are `5-10` dBm for very short range and `15-20` dBm for a wider test area. Choose the production value only after a site RF test; the supported software range is `1-33` dBm.
+
+Ubuntu uses the same Compose files with shell syntax:
+
+```bash
+export RFID_SERIAL_DEVICE=/dev/serial/by-id/<reader-adapter-id>
+export RFID_DIALOUT_GID="$(getent group dialout | cut -d: -f3)"
+export RFID_READER_ANTENNA_POWER=10
+export RFID_READER_ALARM_MODE=BuzzerAndDigitalOutput1
+
+docker compose -p rfid-dev \
+  --env-file docker/dev.env \
+  -f docker-compose.yml \
+  -f docker-compose.dev.yml \
+  -f docker-compose.serial.yml \
+  up -d --build --force-recreate middleware
+
+docker compose -p rfid-dev \
+  --env-file docker/dev.env \
+  -f docker-compose.yml \
+  -f docker-compose.dev.yml \
+  -f docker-compose.serial.yml \
+  logs --tail 100 middleware
+```
+
+To apply a different value, replace `10` and recreate the middleware. To stop middleware from changing reader power on future connections, remove `RFID_READER_ANTENNA_POWER` from the shell/environment file and recreate it. Remember that this leaves the last applied hardware value in place.
+
+### Continuous PowerShell scan monitor
+
+The helper below runs until `Ctrl+C` and prints every reader observation, including repeated reads of the same EPC. Authorization status is shown in green or red using the acceptance-test EPC list configured in the script:
+
+```powershell
+.\scripts\watch-scans.ps1 `
+  -ProjectName rfid-dev `
+  -SerialDevice /dev/ttyUSB0 `
+  -DialoutGid 20 `
+  -PollSeconds 1
+```
+
+`PollSeconds` controls how frequently the helper retrieves accumulated observations; it is not an overall duration or stop time.
 
 ## 9. Fast development stack with Docker and mock backend
 
@@ -396,7 +481,7 @@ export RFID_VendorReader__Transport=Serial
 export RFID_VendorReader__SerialDevice=/dev/ttyUSB0
 export RFID_VendorReader__Baud=115200
 export RFID_VendorReader__Rs485Address=0
-export RFID_VendorReader__AlarmMode=BuzzerAndDigitalOutputs
+export RFID_VendorReader__AlarmMode=BuzzerAndDigitalOutput1
 export RFID_NATIVE_DIR="$PWD/linux/x86_64/release"
 export LD_LIBRARY_PATH="$PWD/linux/x86_64/release"
 ```
@@ -519,7 +604,7 @@ export RFID_ReaderMode=Vendor
 export RFID_VendorReader__Transport=Tcp
 export RFID_VendorReader__Address=192.168.10.20
 export RFID_VendorReader__Port=1969
-export RFID_VendorReader__AlarmMode=BuzzerAndDigitalOutputs
+export RFID_VendorReader__AlarmMode=BuzzerAndDigitalOutput1
 export RFID_NATIVE_DIR="$PWD/linux/x86_64/release"
 export LD_LIBRARY_PATH="$PWD/linux/x86_64/release"
 
@@ -550,7 +635,7 @@ RFID_READER_MODE=Vendor
 RFID_READER_TRANSPORT=Tcp
 RFID_READER_ADDRESS=192.168.10.20
 RFID_READER_PORT=1969
-RFID_READER_ALARM_MODE=BuzzerAndDigitalOutputs
+RFID_READER_ALARM_MODE=BuzzerAndDigitalOutput1
 ```
 
 Validate the rendered configuration and ensure it contains no `mock-backend` service:
@@ -624,13 +709,13 @@ Perform this sequence with the real antennas and alarm wiring. Keep people and u
    timeout 3 bash -c '</dev/tcp/192.168.10.20/1969'
    ```
 
-4. Start middleware in `BuzzerAndDigitalOutputs` setup mode.
+4. Start middleware in `BuzzerAndDigitalOutput1` setup mode.
 5. Confirm `reader test` reports connected and `manifest status` shows the expected active version.
 6. Present each of the two authorized EPCs separately. Each must be audited locally and must not activate any alarm channel.
-7. Present `E280689400004010BF78D96A` or another known-unlisted test tag. The middleware must attempt the built-in buzzer, output 0, and output 1.
+7. Present `E280689400004010BF78D96A` or another known-unlisted test tag. The middleware must attempt the built-in buzzer and output 1. Output 0 must remain unused.
 8. Observe the three-second cooldown by leaving the same unauthorized tag in the field; the output must not chatter continuously.
 9. Check `status`, logs, and the physical channels. An unsupported channel may show critical health while other channels still operate.
-10. Test `Buzzer`, `DigitalOutput0`, and `DigitalOutput1` separately to identify actual hardware capability and wiring.
+10. Test `Buzzer` and `DigitalOutput1` separately to identify actual hardware capability and wiring.
 11. Verify output polarity and pulse time with a meter/test load before attaching the final alarm appliance.
 12. Disconnect backend access briefly. The cached unexpired manifest must continue working.
 13. Do not wait for expiry on a live production batch; use a controlled test manifest to prove expired/no-manifest fail-closed behavior.
@@ -903,7 +988,7 @@ Inspect `reader.error`, `alarm.error`, `lastSystemError`, `lastManifestError`, d
 
 ### Alarm error `-3034`
 
-The selected relay/output is unsupported, disabled, or not configured by the reader. Combined mode still tries the other channels. Test buzzer/output 0/output 1 individually, check the device configuration and firmware, and verify wiring with the vendor manual.
+The selected relay/output is unsupported, disabled, or not configured by the reader. Combined mode still tries the other channel. Test the buzzer and output 1 individually, check the device configuration and firmware, and verify wiring with the vendor manual. Output 0 is intentionally unused.
 
 ### Native library fails to load
 
@@ -972,7 +1057,7 @@ The container health check uses the Unix socket internally; no middleware HTTP p
 - [ ] Expected active manifest ID, version, item count, and expiry are visible locally.
 - [ ] Both authorized acceptance EPCs pass silently.
 - [ ] The unauthorized acceptance EPC activates the expected physical alarm.
-- [ ] Buzzer, output 0, and output 1 capability has been documented.
+- [ ] Buzzer and output 1 capability has been documented; output 0 remains unused.
 - [ ] Final alarm mode, polarity, pulse duration, interposing relay, and load are approved.
 - [ ] Technical faults show critical health without directly pulsing the physical alarm.
 - [ ] Backend outage behavior and manifest expiry fail-closed behavior are verified safely.

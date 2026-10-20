@@ -33,16 +33,13 @@ using (var session = new NativeReaderNetworkSession(
         NativeMethods.SetBuzz(commissioningHandle, NativeBuzzerStatus.On), "reader buzzer on");
     NativeReaderNetworkSessionFactory.ThrowIfError(
         NativeMethods.SetBuzz(commissioningHandle, NativeBuzzerStatus.Off), "reader buzzer off");
-    foreach (var output in new[] { 0, 1 })
-    {
-        NativeReaderNetworkSessionFactory.ThrowIfError(
-            NativeMethods.SetRelayStatus(commissioningHandle, output, NativeRelayStatus.Open),
-            $"digital output {output} on");
-        NativeReaderNetworkSessionFactory.ThrowIfError(
-            NativeMethods.SetRelayStatus(commissioningHandle, output, NativeRelayStatus.Closed),
-            $"digital output {output} off");
-    }
+    NativeReaderNetworkSessionFactory.ThrowIfError(
+        NativeMethods.SetRelayStatus(commissioningHandle, 1, NativeRelayStatus.Open),
+        "digital output 1 on");
+    NativeReaderNetworkSessionFactory.ThrowIfError(
+        NativeMethods.SetRelayStatus(commissioningHandle, 1, NativeRelayStatus.Closed),
+        "digital output 1 off");
     session.Reboot();
-    Console.WriteLine($"Network commissioning, buzzer, and outputs 0/1 mock passed: {afterNetwork.Ip}:{afterNetwork.Port}");
+    Console.WriteLine($"Network commissioning, buzzer, and output 1 mock passed: {afterNetwork.Ip}:{afterNetwork.Port}");
 }
 

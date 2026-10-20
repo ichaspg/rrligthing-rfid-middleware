@@ -52,11 +52,14 @@ public sealed class VendorReaderAdapter : IReaderAdapter
             };
             ThrowIfError(result.Item1, "connect");
             _handle = ReaderSafeHandle.Create(result.Item2);
+            ApplyConfiguredAntennaPower();
             Volatile.Write(ref _health, new(true, false, null, _clock.UtcNow));
             _logger.LogInformation("Vendor reader connected using {Transport}", _options.Transport);
         }
         catch (Exception ex)
         {
+            _handle?.Dispose();
+            _handle = null;
             _deviceLease?.Dispose();
             _deviceLease = null;
             Volatile.Write(ref _health, new(false, false, ex.Message, _clock.UtcNow));
@@ -154,6 +157,28 @@ public sealed class VendorReaderAdapter : IReaderAdapter
 
     private static unsafe int StartNativeListening(int handle) =>
         NativeMethods.StartListenAutoRead(handle, &OnNativeRead);
+
+    private void ApplyConfiguredAntennaPower()
+    {
+        if (_options.AntennaPower is not { } power) return;
+        if (power is < 1 or > 33)
+            throw new InvalidOperationException("VendorReader.AntennaPower must be between 1 and 33 dBm.");
+
+        ThrowIfError(NativeMethods.GetAntennaCount(Handle, out var antennaCount), "get_ant_count");
+        if (antennaCount is < 1 or > 16)
+            throw new InvalidOperationException($"RFID SDK returned invalid antenna count {antennaCount}.");
+
+        for (var antenna = 1; antenna <= antennaCount; antenna++)
+        {
+            ThrowIfError(NativeMethods.SetPower(Handle, antenna, power), $"set_power(antenna {antenna})");
+            ThrowIfError(NativeMethods.GetPower(Handle, antenna, out var readBack), $"get_power(antenna {antenna})");
+            if (readBack != power)
+                throw new InvalidOperationException(
+                    $"RFID antenna {antenna} power read-back was {readBack} dBm, expected {power} dBm.");
+        }
+
+        _logger.LogInformation("Configured {AntennaCount} reader antennas to {Power} dBm", antennaCount, power);
+    }
 
     private static unsafe string ReadCString(byte* pointer, int maximum)
     {
