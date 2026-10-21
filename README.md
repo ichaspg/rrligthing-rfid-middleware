@@ -2,11 +2,12 @@
 
 For the complete HTTP contract, request and response schemas, status codes, idempotency rules, and local Unix-socket endpoints, use [docs/API.md](docs/API.md). For a single end-to-end handover covering installation, every CLI command, Docker and systemd deployment, WSL/VirtualBox USB, BAFO commissioning, permanent LAN operation, alarm outputs, hardware acceptance, mobile integration, and troubleshooting, use [docs/COMPLETE_OPERATIONS_AND_INTEGRATION_GUIDE.md](docs/COMPLETE_OPERATIONS_AND_INTEGRATION_GUIDE.md).
 
-Reader-initiated TCP has two standalone deployment runbooks:
+Reader-initiated TCP has standalone deployment and test runbooks:
 
 - [Fresh Ubuntu server setup](docs/FRESH_SERVER_READER_INITIATED_SETUP.md)
 - [Temporary public VPS setup](docs/VPS_READER_INITIATED_SETUP.md)
 - [Permanent local production server setup](docs/LOCAL_PRODUCTION_READER_INITIATED_SETUP.md)
+- [Postman shared-backend and physical-reader test](docs/POSTMAN_BACKEND_TEST_GUIDE.md)
 
 .NET 8 LTS command-line service for Ubuntu 24.04 x86-64. It validates RFID EPC observations against a durable mobile-controlled manifest, operates offline, and raises the configured reader alarm only for tags that cannot be authorized. Scan data remains in the middleware's local PostgreSQL database and is never uploaded to the server.
 
