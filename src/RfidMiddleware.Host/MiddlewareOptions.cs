@@ -14,8 +14,19 @@ public sealed class MiddlewareOptions
     public int ManifestPollSeconds { get; set; } = 5;
     public int ManifestWarningSeconds { get; set; } = 300;
     public int DedupWindowMilliseconds { get; set; } = 2000;
+    public ManifestMode ManifestMode { get; set; } = ManifestMode.Pull;
     public string ReaderMode { get; set; } = "ManagedFake";
     public FakeReaderOptions FakeReader { get; set; } = new();
     public VendorReaderOptions VendorReader { get; set; } = new();
     public ServerOptions Server { get; set; } = new();
+    public PublicApiOptions PublicApi { get; set; } = new();
+}
+
+public enum ManifestMode { Pull, Push }
+
+public sealed class PublicApiOptions
+{
+    public string BindAddress { get; set; } = "0.0.0.0";
+    public int Port { get; set; } = 8080;
+    public string TokenEnvironmentVariable { get; set; } = "RFID_API_TOKEN";
 }

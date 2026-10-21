@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using RfidMiddleware.Core;
@@ -36,7 +37,18 @@ ValidateOptions(options);
 var socketPath = Path.GetFullPath(options.ControlSocket);
 Directory.CreateDirectory(Path.GetDirectoryName(socketPath)!);
 if (File.Exists(socketPath)) File.Delete(socketPath);
-builder.WebHost.ConfigureKestrel(server => server.ListenUnixSocket(socketPath, listen => listen.Protocols = HttpProtocols.Http1));
+builder.WebHost.ConfigureKestrel(server =>
+{
+    server.ListenUnixSocket(socketPath, listen => listen.Protocols = HttpProtocols.Http1);
+    if (options.ManifestMode == ManifestMode.Push)
+    {
+        if (options.PublicApi.BindAddress == "0.0.0.0")
+            server.ListenAnyIP(options.PublicApi.Port, listen => listen.Protocols = HttpProtocols.Http1);
+        else
+            server.Listen(IPAddress.Parse(options.PublicApi.BindAddress), options.PublicApi.Port,
+                listen => listen.Protocols = HttpProtocols.Http1);
+    }
+});
 
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton<IClock, SystemClock>();
@@ -46,12 +58,17 @@ builder.Services.AddSingleton<ManifestSyncTrigger>();
 builder.Services.AddSingleton(sp => new PostgresMiddlewareStore(options.DatabaseConnectionString));
 builder.Services.AddSingleton<IManifestRepository>(sp => sp.GetRequiredService<PostgresMiddlewareStore>());
 builder.Services.AddSingleton<IEventRepository>(sp => sp.GetRequiredService<PostgresMiddlewareStore>());
-builder.Services.AddSingleton(sp =>
+builder.Services.AddSingleton<ManifestPushService>();
+if (options.ManifestMode == ManifestMode.Pull)
 {
-    var http = new HttpClient { BaseAddress = new Uri(options.Server.BaseUrl), Timeout = TimeSpan.FromSeconds(options.Server.TimeoutSeconds) };
-    return http;
-});
-builder.Services.AddSingleton<IManifestClient>(sp => new HttpManifestClient(sp.GetRequiredService<HttpClient>(), options.Server, sp.GetRequiredService<IClock>()));
+    builder.Services.AddSingleton(sp =>
+    {
+        var http = new HttpClient { BaseAddress = new Uri(options.Server.BaseUrl), Timeout = TimeSpan.FromSeconds(options.Server.TimeoutSeconds) };
+        return http;
+    });
+    builder.Services.AddSingleton<IManifestClient>(sp => new HttpManifestClient(sp.GetRequiredService<HttpClient>(), options.Server, sp.GetRequiredService<IClock>()));
+    builder.Services.AddHostedService<ManifestSyncWorker>();
+}
 
 if (string.Equals(options.ReaderMode, "ManagedFake", StringComparison.OrdinalIgnoreCase))
 {
@@ -72,7 +89,6 @@ else
         sp.GetRequiredService<VendorReaderAdapter>(), sp.GetRequiredService<IClock>(), options.VendorReader));
 }
 
-builder.Services.AddHostedService<ManifestSyncWorker>();
 builder.Services.AddHostedService<ReaderPipelineWorker>();
 var app = builder.Build();
 var startupStore = app.Services.GetRequiredService<PostgresMiddlewareStore>();
@@ -82,7 +98,7 @@ var startupManifest = await startupStore.GetActiveAsync();
 var startupState = app.Services.GetRequiredService<RuntimeState>();
 startupState.AuthorizationState = startupAuthorization.State;
 startupState.LatestManifestVersion = startupAuthorization.Version;
-if (startupManifest is null && startupAuthorization.State == AuthorizationState.Uninitialized)
+if (options.ManifestMode == ManifestMode.Pull && startupManifest is null && startupAuthorization.State == AuthorizationState.Uninitialized)
 {
     try
     {
@@ -116,6 +132,66 @@ if (startupManifest is not null)
     startupState.LastManifestSync = startupManifest.ActivatedAt;
 }
 
+app.Use(async (context, next) =>
+{
+    var publicRequest = context.Connection.LocalPort == options.PublicApi.Port;
+    if (publicRequest &&
+        !context.Request.Path.StartsWithSegments("/api/v1") &&
+        !context.Request.Path.Equals("/health/live"))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    if (context.Request.Path.StartsWithSegments("/api/v1"))
+    {
+        var configuredToken = Environment.GetEnvironmentVariable(options.PublicApi.TokenEnvironmentVariable) ?? string.Empty;
+        if (!PublicApiSecurity.HasValidBearerToken(context.Request.Headers.Authorization.ToString(), configuredToken))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return;
+        }
+    }
+
+    await next();
+});
+
+if (options.ManifestMode == ManifestMode.Push)
+{
+    app.MapPut("/api/v1/middleware/{middlewareId}/manifest", async (
+        string middlewareId, ManifestPushRequest request, ManifestPushService service, CancellationToken token) =>
+    {
+        if (!string.Equals(middlewareId, options.Id, StringComparison.Ordinal)) return Results.NotFound();
+        try
+        {
+            return Results.Ok(await service.ApplyAsync(request, token));
+        }
+        catch (ManifestVersionConflictException ex)
+        {
+            return Results.Conflict(new { error = ex.Message, currentVersion = ex.CurrentVersion });
+        }
+        catch (InvalidDataException ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+    });
+    app.MapGet("/api/v1/middleware/{middlewareId}/manifest/status", (string middlewareId, RuntimeState state) =>
+        !string.Equals(middlewareId, options.Id, StringComparison.Ordinal)
+            ? Results.NotFound()
+            : Results.Ok(new
+            {
+                middlewareId = options.Id,
+                authorizationState = state.AuthorizationState.ToString(),
+                state.LatestManifestVersion,
+                state.ActiveManifestId,
+                state.ActiveManifestVersion,
+                state.ManifestExpiresAt,
+                state.LastManifestSync,
+                state.LastManifestError
+            }));
+    app.MapGet("/health/live", () => Results.Ok(new { status = "running", mode = "push" }));
+}
+
 app.MapGet("/status", (RuntimeState state, IReaderAdapter reader, IAlarmController alarm) =>
 {
     var now = DateTimeOffset.UtcNow;
@@ -133,7 +209,7 @@ app.MapGet("/status", (RuntimeState state, IReaderAdapter reader, IAlarmControll
         state.StartedAt,
         reader = reader.Health,
         alarm = alarm.Health,
-        authorization = new { state.AuthorizationState, state.LatestManifestVersion },
+        authorization = new { authorizationState = state.AuthorizationState.ToString(), state.LatestManifestVersion },
         manifest = new { state.ActiveManifestId, state.ActiveManifestVersion, state.ManifestExpiresAt, state.LastManifestSync, state.LastManifestError },
         system = new { state.LastSystemError },
         reads = new { received = state.ReadsReceived, dropped = state.ReadsDropped },
@@ -141,8 +217,14 @@ app.MapGet("/status", (RuntimeState state, IReaderAdapter reader, IAlarmControll
         scanDataPolicy = "LOCAL_ONLY"
     });
 });
-app.MapGet("/manifest", (RuntimeState state) => Results.Ok(new { state.AuthorizationState, state.LatestManifestVersion, state.ActiveManifestId, state.ActiveManifestVersion, state.ManifestExpiresAt, state.LastManifestSync, state.LastManifestError }));
-app.MapPost("/manifest/sync", (ManifestSyncTrigger trigger) => { trigger.Signal(); return Results.Accepted(); });
+app.MapGet("/manifest", (RuntimeState state) => Results.Ok(new { authorizationState = state.AuthorizationState.ToString(), state.LatestManifestVersion, state.ActiveManifestId, state.ActiveManifestVersion, state.ManifestExpiresAt, state.LastManifestSync, state.LastManifestError }));
+app.MapPost("/manifest/sync", (ManifestSyncTrigger trigger) =>
+{
+    if (options.ManifestMode == ManifestMode.Push)
+        return Results.Conflict(new { error = "Manifest synchronization is disabled in Push mode; send a manifest to the direct API." });
+    trigger.Signal();
+    return Results.Accepted();
+});
 app.MapGet("/audit", async (IEventRepository repository, CancellationToken token) => Results.Ok(await repository.GetStatsAsync(token)));
 app.MapGet("/db/verify", async (IEventRepository repository, CancellationToken token) => Results.Ok(new { result = await repository.VerifyAsync(token) }));
 app.MapGet("/reader/test", (IReaderAdapter reader) => Results.Ok(reader.Health));
@@ -187,7 +269,19 @@ static void ValidateOptions(MiddlewareOptions value)
         throw new InvalidDataException("VendorReader.AntennaPower must be between 1 and 33 dBm when configured.");
     try { VendorReaderOptionsValidator.Validate(value.VendorReader); }
     catch (ArgumentException ex) { throw new InvalidDataException(ex.Message, ex); }
-    if (!Uri.TryCreate(value.Server.BaseUrl, UriKind.Absolute, out _)) throw new InvalidDataException("Server BaseUrl is invalid.");
+    if (value.ManifestMode == ManifestMode.Pull && !Uri.TryCreate(value.Server.BaseUrl, UriKind.Absolute, out _))
+        throw new InvalidDataException("Server BaseUrl is invalid in Pull manifest mode.");
+    if (value.ManifestMode == ManifestMode.Push)
+    {
+        if (value.PublicApi.Port is < 1 or > 65535) throw new InvalidDataException("PublicApi.Port is invalid.");
+        if (value.VendorReader.Transport == VendorTransport.TcpListener && value.PublicApi.Port == value.VendorReader.Port)
+            throw new InvalidDataException("PublicApi.Port must differ from the RFID reader listener port.");
+        if (!IPAddress.TryParse(value.PublicApi.BindAddress, out _)) throw new InvalidDataException("PublicApi.BindAddress must be an IP address.");
+        if (string.IsNullOrWhiteSpace(value.PublicApi.TokenEnvironmentVariable))
+            throw new InvalidDataException("PublicApi.TokenEnvironmentVariable is required.");
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(value.PublicApi.TokenEnvironmentVariable)))
+            throw new InvalidDataException($"Environment variable {value.PublicApi.TokenEnvironmentVariable} is required in Push manifest mode.");
+    }
 }
 
 static async Task RunClientCommandAsync(string command, string[] values, string config)

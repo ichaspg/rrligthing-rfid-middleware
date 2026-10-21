@@ -93,6 +93,17 @@ public sealed class PackagingContractTests
         Assert.Contains("RFID_READER_BIND_ADDRESS", listener, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void VpsOverrideEnablesDirectPushApiAndReaderListener()
+    {
+        var vps = File.ReadAllText(Path.Combine(Root, "docker-compose.vps.yml"));
+        Assert.Contains("RFID_ManifestMode: Push", vps, StringComparison.Ordinal);
+        Assert.Contains("RFID_VendorReader__Transport: TcpListener", vps, StringComparison.Ordinal);
+        Assert.Contains("RFID_API_BIND_ADDRESS", vps, StringComparison.Ordinal);
+        Assert.Contains("RFID_API_PORT", vps, StringComparison.Ordinal);
+        Assert.Contains("RFID_READER_BIND_ADDRESS", vps, StringComparison.Ordinal);
+    }
+
     private static string FindRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

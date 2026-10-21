@@ -30,7 +30,11 @@ services:
       RFID_ControlSocket: /run/rfid-middleware/control.sock
       RFID_ReaderLockFile: /run/rfid-middleware/reader.lock
       RFID_CommissioningBackupDirectory: /var/lib/rfid-middleware/commissioning
-      RFID_Server__BaseUrl: ${RFID_SERVER_BASE_URL:?Set RFID_SERVER_BASE_URL in the selected environment file}
+      RFID_ManifestMode: ${RFID_MANIFEST_MODE:-Pull}
+      RFID_Server__BaseUrl: ${RFID_SERVER_BASE_URL:-}
+      RFID_PublicApi__BindAddress: 0.0.0.0
+      RFID_PublicApi__Port: ${RFID_API_PORT:-8080}
+      RFID_PublicApi__TokenEnvironmentVariable: RFID_API_TOKEN
       RFID_ReaderMode: ${RFID_READER_MODE:-Vendor}
       RFID_VendorReader__Transport: ${RFID_READER_TRANSPORT:-Tcp}
       RFID_VendorReader__Address: ${RFID_READER_ADDRESS:-192.168.1.223}

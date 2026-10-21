@@ -1,34 +1,25 @@
 # RFID Transport Validation Middleware
 
-For the complete HTTP contract, request and response schemas, status codes, idempotency rules, and local Unix-socket endpoints, use [docs/API.md](docs/API.md). For a single end-to-end handover covering installation, every CLI command, Docker and systemd deployment, WSL/VirtualBox USB, BAFO commissioning, permanent LAN operation, alarm outputs, hardware acceptance, mobile integration, and troubleshooting, use [docs/COMPLETE_OPERATIONS_AND_INTEGRATION_GUIDE.md](docs/COMPLETE_OPERATIONS_AND_INTEGRATION_GUIDE.md).
-
-Reader-initiated TCP has standalone deployment and test runbooks:
-
-- [Fresh Ubuntu server setup](docs/FRESH_SERVER_READER_INITIATED_SETUP.md)
-- [Temporary public VPS setup](docs/VPS_READER_INITIATED_SETUP.md)
-- [Permanent local production server setup](docs/LOCAL_PRODUCTION_READER_INITIATED_SETUP.md)
-- [Postman shared-backend and physical-reader test](docs/POSTMAN_BACKEND_TEST_GUIDE.md)
-
 .NET 8 LTS command-line service for Ubuntu 24.04 x86-64. It validates RFID EPC observations against a durable mobile-controlled manifest, operates offline, and raises the configured reader alarm only for tags that cannot be authorized. Scan data remains in the middleware's local PostgreSQL database and is never uploaded to the server.
 
 ## Purpose
 
-The middleware sits between an RFID reader and a transport-management backend. It downloads a versioned authorization manifest, validates tags locally with low latency, and operates during backend outages. Temporary hardware-setup mode attempts the built-in buzzer plus digital output 1 for every unauthorized observation; technical faults are exposed through health, metrics, and logs.
+The middleware sits between an RFID reader and a transport-management backend. In the recommended VPS Push mode, the backend sends a versioned authorization manifest directly to the middleware URL. Legacy Pull mode remains available. The middleware validates tags locally with low latency and operates during backend outages. Temporary hardware-setup mode attempts the built-in buzzer plus digital output 1 for every unauthorized observation; technical faults are exposed through health, metrics, and logs.
 
 The supported operational flow is:
 
 ```text
-mobile authorizes EPC → backend publishes manifest version → middleware synchronizes
+backend/mobile sends complete manifest version → middleware applies it synchronously
                      → listed tag scan passes silently
-mobile revokes EPC   → backend publishes next version → middleware synchronizes
+backend/mobile sends next version without EPC
                      → later tag scan raises the unauthorized alarm
-mobile completes batch → middleware clears active authorization
+backend/mobile sends COMPLETED next version → middleware clears active authorization
 ```
 
 ## Important data policy
 
-- The middleware downloads manifests from the backend over HTTP/HTTPS.
-- Mobile clients send revocations to the backend, not directly to the reader middleware.
+- Push mode accepts complete manifests through an authenticated HTTP API; Pull mode downloads them from a backend.
+- The direct API accepts manifest state, not raw reader commands or scan uploads.
 - EPC scan observations are stored only in the middleware's local `rfid_edge` PostgreSQL database.
 - The backend has no scan-event upload endpoint or scan-event table.
 - Development status and reader-watch commands use a permission-restricted local Unix socket.
@@ -39,6 +30,7 @@ mobile completes batch → middleware clears active authorization
 - Managed fake reader for deterministic development and load testing.
 - EPC normalization, multi-antenna aggregation, and configurable duplicate window.
 - Immutable, monotonically increasing manifest versions with atomic activation.
+- Authenticated direct manifest push with synchronous applied-version acknowledgement and idempotent retry.
 - Fail-closed validation for missing or expired manifests and persistence failures.
 - The configured alarm pulses only for tags that are unauthorized, invalid, or observed without a valid manifest. `BuzzerAndDigitalOutput1` is the hardware-setup default and attempts the buzzer and output 1 independently. Output 0 is intentionally unused.
 - Critical health, metrics, and structured logs for reader, database, queue, and synchronization faults.
@@ -50,15 +42,14 @@ mobile completes batch → middleware clears active authorization
 ## Architecture
 
 ```text
-Mobile app ── authorize/revoke/complete ──► backend API ──► rfid_backend PostgreSQL
-                                           │
-                                     active manifest
-                                           │ HTTP GET + ETag
-                                           ▼
-RFID reader ── native SDK ──► middleware ──► rfid_edge PostgreSQL
-                                  │             local scans only
-                                  └──► buzzer + digital output 1
+Backend/mobile service ── complete manifest via HTTP PUT ──► middleware
+                                                               │
+RFID reader ─────────── native SDK / TCP 1969 ─────────────────┤
+                                                               ├──► rfid_edge PostgreSQL (local scans only)
+                                                               └──► buzzer + digital output 1
 ```
+
+The older Pull mode reverses the manifest arrow: middleware polls the shared backend with HTTP GET and ETag. The development mock backend exists to test that compatibility mode.
 
 Development uses two databases in one PostgreSQL container:
 
@@ -167,6 +158,17 @@ docker compose -p rfid-prod \
 
 The listener accepts one reader, reports critical health while none is connected, rejects additional simultaneous readers, and resumes inventory automatically after reconnection. The override publishes a raw, unauthenticated vendor-protocol port. On a VPS, allow it only from the test site's stable public IP in both the cloud and host firewalls.
 
+For the direct VPS API, use `docker-compose.vps.yml` instead of `docker-compose.listener.yml`. It enables reader-initiated TCP plus manifest Push mode and publishes HTTP port `8080`:
+
+```bash
+docker compose -p rfid-prod \
+  --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.vps.yml \
+  up -d --build
+```
+
+Give the backend team `http://<VPS_IP>:8080`, the middleware ID, the bearer token, and the direct API routes listed below. Use HTTPS termination for production.
+
 For USB serial on Ubuntu, attach the device to the VM first, then use its stable path and the host `dialout` group ID:
 
 ```bash
@@ -270,21 +272,19 @@ cp .env.production.example .env.production
 chmod 600 .env.production
 ```
 
-Stop the development project, then start a separately named production project using **only** the base Compose file:
+Stop the development project, then start a separately named direct-VPS project:
 
 ```bash
 docker compose -p rfid-dev --env-file docker/dev.env -f docker-compose.yml -f docker-compose.dev.yml down
-docker compose -p rfid-prod --env-file .env.production -f docker-compose.yml config
-docker compose -p rfid-prod --env-file .env.production -f docker-compose.yml up -d --build
+docker compose -p rfid-prod --env-file .env.production -f docker-compose.yml -f docker-compose.vps.yml config
+docker compose -p rfid-prod --env-file .env.production -f docker-compose.yml -f docker-compose.vps.yml up -d --build
 ```
 
-Never include `docker-compose.dev.yml` in a shipment. When that file is omitted, no mock-backend service, development token, generated backend manifest, or `rfid_backend` database is created. The middleware contacts only `RFID_SERVER_BASE_URL` using `RFID_API_TOKEN`. Verify the rendered `config` output contains the intended real URL, middleware ID, reader address, and no `mock-backend` service before starting.
+Never include `docker-compose.dev.yml` in a shipment. When that file is omitted, no mock-backend service, development token, generated backend manifest, or `rfid_backend` database is created. In Push mode, the middleware accepts complete manifests directly on the authenticated API and does not require `RFID_SERVER_BASE_URL`. Verify the rendered `config` output contains `RFID_ManifestMode: Push`, the intended middleware ID and ports, and no `mock-backend` service before starting.
 
-For production serial mode, append `-f docker-compose.serial.yml`; for TCP mode, the base file already defaults to `Vendor`/`Tcp`, and `docker-compose.tcp.yml` can be appended to require an explicit reader address.
+For legacy Pull mode, use the appropriate reader override and set `RFID_SERVER_BASE_URL`. For production serial mode, append `-f docker-compose.serial.yml`; for outbound TCP mode, the base file already defaults to `Vendor`/`Tcp`.
 
 ## Real hardware quick reference
-
-For the complete non-Docker Ubuntu server procedure, including the exact two-tag manifest, BAFO commissioning, serial/TCP execution, buzzer testing, SQL audit checks, systemd, Docker verification, and mobile handover, use [docs/COMPLETE_OPERATIONS_AND_INTEGRATION_GUIDE.md](docs/COMPLETE_OPERATIONS_AND_INTEGRATION_GUIDE.md).
 
 The committed native SDK is the Linux x86-64 build under `linux/x86_64/release`. For a USB serial reader, first obtain its current bus ID instead of assuming it is permanent. Windows exposes the adapter to WSL using `usbipd`, after which the middleware normally uses `/dev/ttyUSB0` or a stable `/dev/serial/by-id/...` path.
 
@@ -327,7 +327,15 @@ rfid-middleware diagnostics bundle --output <file>
 
 The `reader network` and `reader client` commands are standalone commissioning commands and require the middleware to be stopped. Other commands except `run` communicate with the running process through its Unix control socket. Commissioning does not require PostgreSQL or backend connectivity.
 
-## HTTP API used in development
+## HTTP APIs
+
+Direct middleware API in Push mode:
+
+- `PUT /api/v1/middleware/{id}/manifest` — validate, persist, and immediately activate/complete a manifest.
+- `GET /api/v1/middleware/{id}/manifest/status` — confirm the applied authorization version.
+- `GET /health/live` — process liveness without scan or reader details.
+
+Development reference backend in Pull mode:
 
 - `GET /api/v1/middleware/{id}/manifest` — middleware manifest retrieval with ETag support.
 - `POST /api/v1/mobile/middleware/{id}/manifests/{manifestId}/items/authorize` — idempotently authorize an EPC.
@@ -344,6 +352,9 @@ There is intentionally no middleware scan-upload API.
 Use `.env.example` for WSL development and `packaging/environment.example` for a packaged service. Important values include:
 
 - `RFID_API_TOKEN`
+- `RFID_ManifestMode` (`Push` for the direct VPS API, `Pull` for backend polling)
+- `RFID_PublicApi__BindAddress`
+- `RFID_PublicApi__Port`
 - `RFID_DatabaseConnectionString`
 - `RFID_ReaderLockFile`
 - `RFID_CommissioningBackupDirectory`
@@ -398,7 +409,7 @@ docker-compose*.yml                Shipping, development, TCP, and serial defini
 - Use a local PostgreSQL service for `rfid_edge` so backend/network outages do not prevent local validation.
 - Use a stable `/dev/serial/by-id/...` path instead of `/dev/ttyUSB0` in production.
 - Set a strong PostgreSQL password and a production bearer token outside `appsettings.json`.
-- Require TLS for communication with the production backend.
+- Require TLS in front of the direct Push API or for communication with a Pull-mode production backend.
 - Verify the selected alarm channels and pulse timing, enabled antennas, baud/address, and reader firmware on physical hardware. Setup mode is `BuzzerAndDigitalOutput1`; select the final single channel only after wiring acceptance.
 - Run the release soak and native lifecycle tests before deployment.
 
