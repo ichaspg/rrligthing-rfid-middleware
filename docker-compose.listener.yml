@@ -1,0 +1,8 @@
+services:
+  middleware:
+    environment:
+      RFID_ReaderMode: Vendor
+      RFID_VendorReader__Transport: TcpListener
+      RFID_VendorReader__Port: ${RFID_READER_PORT:-1969}
+    ports:
+      - "${RFID_READER_BIND_ADDRESS:-0.0.0.0}:${RFID_READER_PORT:-1969}:${RFID_READER_PORT:-1969}/tcp"

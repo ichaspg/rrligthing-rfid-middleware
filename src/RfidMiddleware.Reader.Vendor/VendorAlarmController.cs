@@ -108,11 +108,11 @@ public sealed class VendorAlarmController(VendorReaderAdapter reader, IClock clo
     }
 
     private void TrySetBuzzer(bool active, ICollection<string> failures) => TrySetChannel(
-        NativeMethods.SetBuzz(reader.Handle, active ? NativeBuzzerStatus.On : NativeBuzzerStatus.Off),
+        reader.SetBuzz(active),
         $"reader buzzer {(active ? "on" : "off")}", failures);
 
     private void TrySetDigitalOutput(int output, bool active, ICollection<string> failures) => TrySetChannel(
-        NativeMethods.SetRelayStatus(reader.Handle, output, active ? NativeRelayStatus.Open : NativeRelayStatus.Closed),
+        reader.SetDigitalOutput(output, active),
         $"digital output {output} {(active ? "on" : "off")}", failures);
 
     private static void TrySetChannel(int result, string operation, ICollection<string> failures)

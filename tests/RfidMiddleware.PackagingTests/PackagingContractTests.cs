@@ -78,15 +78,19 @@ public sealed class PackagingContractTests
     }
 
     [Fact]
-    public void DockerReaderOverridesDoNotPublishReaderPort()
+    public void DockerReaderOverridesPublishOnlyTheInboundListenerPort()
     {
         var shipping = File.ReadAllText(Path.Combine(Root, "docker-compose.yml"));
         var tcp = File.ReadAllText(Path.Combine(Root, "docker-compose.tcp.yml"));
         var serial = File.ReadAllText(Path.Combine(Root, "docker-compose.serial.yml"));
+        var listener = File.ReadAllText(Path.Combine(Root, "docker-compose.listener.yml"));
         Assert.DoesNotContain("1969:1969", shipping, StringComparison.Ordinal);
         Assert.DoesNotContain("ports:", tcp, StringComparison.Ordinal);
         Assert.DoesNotContain("ports:", serial, StringComparison.Ordinal);
         Assert.Contains("/dev/rfid-reader", serial, StringComparison.Ordinal);
+        Assert.Contains("RFID_VendorReader__Transport: TcpListener", listener, StringComparison.Ordinal);
+        Assert.Contains("ports:", listener, StringComparison.Ordinal);
+        Assert.Contains("RFID_READER_BIND_ADDRESS", listener, StringComparison.Ordinal);
     }
 
     private static string FindRoot()

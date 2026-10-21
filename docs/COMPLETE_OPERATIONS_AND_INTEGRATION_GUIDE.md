@@ -17,9 +17,9 @@ Production backend
   v
 RFID middleware on Ubuntu
   | local authorization and local PostgreSQL audit
-  | outbound TCP connection to reader
+  | outbound TCP to reader, or inbound TcpListener for reader-initiated mode
   v
-RFID reader at a fixed private LAN address, normally TCP 1969
+RFID reader, normally using TCP 1969
   |-- authorized EPC: no alarm
   `-- unauthorized/invalid/no valid manifest: configured alarm
 ```
@@ -76,11 +76,11 @@ Use the BAFO USB-to-RS-232 adapter only while standing near the reader for initi
 Ubuntu host or VM -- USB/BAFO RS-232 --> reader
 ```
 
-Serial commissioning uses 115200 baud and reader address `0`. It reads and writes the reader's own IPv4 configuration. It does not save the middleware server address in the reader.
+Serial commissioning uses 115200 baud and reader address `0`. `reader network` reads and writes the reader's own IPv4 configuration. `reader client` independently reads and writes the remote middleware IPv4 address and port used when the reader initiates the connection.
 
-### Permanent operating connection
+### Permanent operating connections
 
-Normal operation uses Ethernet:
+Outbound `Tcp` mode keeps the original private-LAN design:
 
 ```text
 Ubuntu middleware -- private warehouse LAN TCP 1969 --> fixed reader IP
@@ -88,6 +88,15 @@ Ubuntu middleware -- HTTPS/Twingate --> production backend
 ```
 
 The middleware initiates the reader connection. The Ubuntu server may therefore use DHCP, although a reserved server address is operationally convenient. The reader needs a fixed address or DHCP reservation. Do not publish reader port 1969 to the internet, expose it through Docker, or route it through Twingate unless the network design explicitly requires and secures that path.
+
+`TcpListener` reverses only the reader connection direction:
+
+```text
+RFID reader -- outbound vendor TCP --> middleware TCP listener
+Middleware -- HTTPS/Twingate --> production backend
+```
+
+The middleware accepts one reader, reports critical health while it is absent, rejects additional simultaneous connections, and automatically resumes inventory when the reader reconnects. In the warehouse, configure the reader with the Linux server's private IPv4 address. For a temporary VPS test, configure the public VPS IPv4 address and permit the listener port only from the test site's stable public IP in both cloud and host firewalls. The vendor protocol is not authenticated or encrypted; never leave this port open to the general internet. Twingate is not required on the reader because the reader makes an ordinary outbound TCP connection.
 
 Keep each copper Ethernet segment at or below 100 metres. Use an intermediate switch or fiber/media converters for longer distances. Do not create a long permanent RS-232 cable run.
 
@@ -223,6 +232,26 @@ rfid-middleware reader network verify \
 
 The middleware must be stopped before a commissioning command because both use the exclusive reader lock. Commissioning does not need PostgreSQL or backend connectivity.
 
+### Reader TCP-client commissioning
+
+These serial commands configure the target used by `TcpListener` mode. They do not change the backend URL:
+
+```text
+rfid-middleware reader client show [--json] --config <file>
+rfid-middleware reader client configure \
+  --server-ip <middleware-ipv4> \
+  [--port <1-65535>] \
+  [--apply] \
+  --config <file>
+rfid-middleware reader client disable [--apply] --config <file>
+```
+
+- `show` returns both the stored UDP and TCP report options.
+- `configure` validates a canonical IPv4 address and port, enables TCP reporting, and preserves the complete UDP option.
+- `disable` turns off TCP reporting without erasing its stored address or port.
+- Both mutations are preview-only without `--apply`. Apply writes an atomic `reader-client-*.json` backup, writes both report options, requires exact read-back, and only then reboots.
+- Exit codes match network commissioning: `0` success, `1` SDK/general failure, `2` arguments/validation, `3` reader lock occupied, and `4` read-back verification failure.
+
 ### Manifest, audit, database, and diagnostics
 
 ```text
@@ -253,9 +282,9 @@ Environment variables use the `RFID_` prefix. Nested JSON keys use double unders
 | `RFID_ReaderLockFile` | Exclusive device lock | `/run/rfid-middleware/reader.lock` |
 | `RFID_CommissioningBackupDirectory` | Network backup directory | `/var/lib/rfid-middleware/commissioning` |
 | `RFID_ReaderMode` | `ManagedFake` or `Vendor` | `Vendor` |
-| `RFID_VendorReader__Transport` / `RFID_READER_TRANSPORT` | `NativeMock`, `Serial`, or `Tcp` | `Tcp` |
+| `RFID_VendorReader__Transport` / `RFID_READER_TRANSPORT` | `NativeMock`, `Serial`, `Tcp`, or `TcpListener` | `Tcp` |
 | `RFID_VendorReader__Address` / `RFID_READER_ADDRESS` | Reader IPv4 address | `192.168.10.20` |
-| `RFID_VendorReader__Port` / `RFID_READER_PORT` | Reader TCP port | `1969` |
+| `RFID_VendorReader__Port` / `RFID_READER_PORT` | Remote reader port for `Tcp`; local listening port for `TcpListener` | `1969` |
 | `RFID_VendorReader__SerialDevice` / `RFID_SERIAL_DEVICE` | BAFO/reader device | `/dev/serial/by-id/...` |
 | `RFID_VendorReader__Baud` / `RFID_READER_BAUD` | Serial speed | `115200` |
 | `RFID_VendorReader__Rs485Address` / `RFID_READER_RS485_ADDRESS` | Reader bus address | `0` |
@@ -272,12 +301,12 @@ The plain application environment names and the Compose convenience names are no
 
 | Function | Setting | Allowed values / notes | Restart needed |
 |---|---|---|---|
-| Connection type | `RFID_READER_TRANSPORT` | `Serial`, `Tcp`, or `NativeMock` | Yes |
+| Connection type | `RFID_READER_TRANSPORT` | `Serial`, `Tcp`, `TcpListener`, or `NativeMock` | Yes |
 | Serial device | `RFID_SERIAL_DEVICE` | Linux device such as `/dev/ttyUSB0` or preferably `/dev/serial/by-id/...` | Recreate container |
 | Serial speed | `RFID_READER_BAUD` | Normally `115200` | Recreate container |
 | Reader bus address | `RFID_READER_RS485_ADDRESS` | Normally `0` for direct RS-232 commissioning | Recreate container |
 | Reader LAN address | `RFID_READER_ADDRESS` | Static private IPv4 assigned to the reader | Recreate container |
-| Reader LAN port | `RFID_READER_PORT` | `1-65535`; normally `1969` | Recreate container |
+| Reader/listener TCP port | `RFID_READER_PORT` | `1-65535`; remote reader port for `Tcp`, local port for `TcpListener` | Recreate container |
 | Antenna RF power | `RFID_READER_ANTENNA_POWER` | Optional integer `1-33` dBm; applied to all detected antennas and verified by read-back | Reconnect/recreate |
 | Alarm output | `RFID_READER_ALARM_MODE` | `Buzzer`, `DigitalOutput1`, or `BuzzerAndDigitalOutput1` | Recreate container |
 | Alarm pulse | `RFID_VendorReader__AlarmPulseMilliseconds` | Milliseconds; direct app setting unless added to a Compose override | Restart/recreate |
@@ -653,6 +682,8 @@ docker compose -p rfid-prod --env-file .env.production \
   up -d --build
 ```
 
+For reader-initiated mode, set `RFID_READER_TRANSPORT=TcpListener`, omit the unused reader address, and render/start with `docker-compose.listener.yml` instead. Before starting it, restrict TCP `${RFID_READER_PORT}` in the cloud firewall and host firewall to the reader site's stable public source IP. A private warehouse deployment should bind and firewall the listener only on the warehouse network.
+
 Inspect:
 
 ```bash
@@ -681,6 +712,26 @@ export RFID_READER_PORT=1969
 docker compose -p rfid-prod --env-file .env.production \
   -f docker-compose.yml -f docker-compose.tcp.yml up -d --build
 ```
+
+### Reader-initiated TCP listener
+
+```bash
+export RFID_READER_PORT=1969
+export RFID_READER_BIND_ADDRESS=0.0.0.0
+docker compose -p rfid-prod --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.listener.yml up -d --build
+```
+
+The bind address controls host publication but is not authentication. Configure the cloud and host firewall to allow only the approved source IPv4 address. Confirm `reader.error` says it is waiting before powering or rebooting the commissioned reader; after connection, `reader.connected` and `reader.inventoryRunning` must both become `true`.
+
+For example, after first confirming the VPS's existing SSH/firewall policy, an Ubuntu host using UFW can allow only the test site's stable public address:
+
+```bash
+sudo ufw allow from <TEST-SITE-PUBLIC-IP> to any port 1969 proto tcp
+sudo ufw status numbered
+```
+
+Create the equivalent source restriction in the VPS provider firewall. Remove both temporary rules when testing finishes. Do not run `ufw enable` remotely without first preserving approved administrative access.
 
 ### Temporary serial reader/BAFO
 
@@ -963,14 +1014,14 @@ Use `\d <table>` before querying a table. Operationally, prefer `audit stats` an
 
 ## 21. Twingate and dynamic server addressing
 
-Twingate is suitable for the Ubuntu server's outbound production-backend connection and remote administration. It does not replace the local reader link.
+Twingate is suitable for the Ubuntu server's outbound production-backend connection and remote administration. A reader that cannot run Twingate must use ordinary routed TCP to the middleware.
 
 - The middleware initiates HTTPS to the backend, so the warehouse's public IP can remain hidden and dynamic.
-- The middleware initiates TCP to the reader, so the reader stores no server IP.
-- The reader and Ubuntu server need private routed reachability on the warehouse LAN/VLAN.
-- Give the reader a fixed/reserved private address; the Ubuntu host may use DHCP.
+- In `Tcp` mode, the middleware initiates TCP to the reader, so the reader stores no server IP. Give the reader a fixed/reserved private address.
+- In `TcpListener` mode, the reader stores the middleware IPv4 address and initiates TCP. Give the warehouse Linux server a fixed/reserved private address.
+- The reader and Ubuntu server need routed reachability appropriate to the selected direction.
 - External/mobile applications connect to the production backend, not directly to the reader or middleware.
-- Do not create public NAT/port-forwarding for reader TCP 1969.
+- Do not create public NAT/port-forwarding for outbound `Tcp` mode. A temporary `TcpListener` VPS test is permitted only with a source-IP allowlist and active supervision; remove the rule after testing.
 
 If remote administrators need the Ubuntu host, publish that resource through the organization's approved Twingate policy. Keep production backend DNS stable even when its underlying private address changes.
 
@@ -1026,6 +1077,14 @@ Stop middleware and vendor reader utilities before commissioning. Do not delete 
 - Restore the timestamped backup through preview then `--apply` if necessary.
 - Power-cycle and verify again.
 
+### Reader does not connect to `TcpListener`
+
+- Run `reader client show` over serial and confirm TCP is enabled with the exact middleware IPv4 address and listener port.
+- Confirm the reader has a usable gateway and can reach that address; numeric IPv4 is required, not DNS.
+- Confirm `docker compose ... config` publishes the same host and container port and inspect middleware logs for listener startup.
+- For VPS testing, verify the cloud firewall, host firewall, NAT egress, and allowlisted source public IPv4 address.
+- Power-cycle the reader after a verified client configuration. If the VM-6x firmware never opens the connection or the returned SDK handle cannot inventory, treat it as a hardware/firmware compatibility blocker and contact the vendor; do not substitute an undocumented protocol.
+
 ### Backend unavailable
 
 Check DNS, routing/Twingate, TLS certificate, URL, token, and backend health. The middleware keeps the last valid cached manifest until expiry. Do not delete the local PostgreSQL volume during an outage.
@@ -1049,9 +1108,10 @@ The container health check uses the Unix socket internally; no middleware HTTP p
 
 - [ ] Ubuntu 24.04 x86-64 and reader firmware/model are recorded.
 - [ ] Reader has an approved fixed/reserved private IPv4 address.
-- [ ] Reader TCP 1969 is reachable only from approved warehouse systems.
+- [ ] Selected connection direction (`Tcp` or `TcpListener`) is recorded and survives power cycles.
+- [ ] Reader/listener TCP 1969 is reachable only from approved systems; any temporary VPS allowlist is removed after testing.
 - [ ] BAFO settings survive reader power-cycle; BAFO is removed after commissioning.
-- [ ] Production uses the base Compose file plus TCP override, with no development override.
+- [ ] Production uses the base Compose file plus the selected TCP or listener override, with no development override.
 - [ ] Production backend uses HTTPS and separate middleware/mobile tokens.
 - [ ] PostgreSQL and middleware volumes are persistent and backed up appropriately.
 - [ ] Expected active manifest ID, version, item count, and expiry are visible locally.
@@ -1068,7 +1128,7 @@ The container health check uses the Unix socket internally; no middleware HTTP p
 
 ## 24. Security and operating rules
 
-- Never expose TCP 1969 publicly.
+- Keep TCP 1969 private in production. A temporary public `TcpListener` test requires a source-IP allowlist, supervision, and removal of the rule afterward.
 - Never ship `docker-compose.dev.yml`, `dev-token`, or `dev-mobile-token`.
 - Never give the middleware bearer token to Android.
 - Never commit environment files or secrets.
@@ -1079,4 +1139,4 @@ The container health check uses the Unix socket internally; no middleware HTTP p
 - Do not erase production volumes to resolve an outage.
 - Do not energize an external alarm load before its electrical design is approved.
 
-This document describes the repository implementation as of October 19, 2026. When CLI help, Compose files, or production infrastructure changes, update this handbook in the same change.
+This document describes the repository implementation as of October 21, 2026. When CLI help, Compose files, or production infrastructure changes, update this handbook in the same change.

@@ -2,6 +2,12 @@
 
 For the complete HTTP contract, request and response schemas, status codes, idempotency rules, and local Unix-socket endpoints, use [docs/API.md](docs/API.md). For a single end-to-end handover covering installation, every CLI command, Docker and systemd deployment, WSL/VirtualBox USB, BAFO commissioning, permanent LAN operation, alarm outputs, hardware acceptance, mobile integration, and troubleshooting, use [docs/COMPLETE_OPERATIONS_AND_INTEGRATION_GUIDE.md](docs/COMPLETE_OPERATIONS_AND_INTEGRATION_GUIDE.md).
 
+Reader-initiated TCP has two standalone deployment runbooks:
+
+- [Fresh Ubuntu server setup](docs/FRESH_SERVER_READER_INITIATED_SETUP.md)
+- [Temporary public VPS setup](docs/VPS_READER_INITIATED_SETUP.md)
+- [Permanent local production server setup](docs/LOCAL_PRODUCTION_READER_INITIATED_SETUP.md)
+
 .NET 8 LTS command-line service for Ubuntu 24.04 x86-64. It validates RFID EPC observations against a durable mobile-controlled manifest, operates offline, and raises the configured reader alarm only for tags that cannot be authorized. Scan data remains in the middleware's local PostgreSQL database and is never uploaded to the server.
 
 ## Purpose
@@ -92,7 +98,7 @@ dotnet run --project src/RfidMiddleware.Host -- status --config appsettings.json
 dotnet run --project src/RfidMiddleware.Host -- reader watch --duration 5 --config appsettings.json
 ```
 
-Set `ReaderMode` to `Vendor` and select `NativeMock`, `Tcp`, or `Serial` under `VendorReader`. Use stable `/dev/serial/by-id/...` paths for serial readers.
+Set `ReaderMode` to `Vendor` and select `NativeMock`, `Tcp`, `TcpListener`, or `Serial` under `VendorReader`. `Tcp` makes the middleware connect to the reader; `TcpListener` waits for one reader to connect to the middleware. Use stable `/dev/serial/by-id/...` paths for serial readers.
 
 The development control socket is under `/tmp` because Unix sockets cannot be created on a Windows-mounted WSL path. The production unit uses `/run/rfid-middleware/control.sock` with restricted permissions.
 
@@ -148,6 +154,18 @@ docker compose -p rfid-dev \
   up -d --build
 ```
 
+For reader-initiated TCP, append the listener override. `RFID_READER_PORT` is the middleware listening port in this mode:
+
+```bash
+export RFID_READER_PORT=1969
+docker compose -p rfid-prod \
+  --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.listener.yml \
+  up -d --build
+```
+
+The listener accepts one reader, reports critical health while none is connected, rejects additional simultaneous readers, and resumes inventory automatically after reconnection. The override publishes a raw, unauthenticated vendor-protocol port. On a VPS, allow it only from the test site's stable public IP in both the cloud and host firewalls.
+
 For USB serial on Ubuntu, attach the device to the VM first, then use its stable path and the host `dialout` group ID:
 
 ```bash
@@ -163,7 +181,7 @@ The serial override maps the selected device to `/dev/rfid-reader` in the contai
 
 ### Commission a reader over BAFO USB-to-RS-232
 
-Commissioning configures the reader's own fixed LAN address. It does **not** store the middleware or backend server address in the reader. Normal operation remains an outbound TCP connection from middleware to reader on port 1969.
+`reader network` commissioning configures the reader's own fixed LAN address. `reader client` commissioning separately configures the middleware address to which the reader connects in `TcpListener` mode. Neither setting is the backend API address.
 
 Use a network-admin-approved static address outside the dynamic DHCP pool, or reserve that address for the reader. Connect Ethernet and the BAFO adapter at the same time. The BAFO connection is temporary and should be made beside the reader; do not use RS-232 for the permanent long-distance link.
 
@@ -200,6 +218,23 @@ docker compose -p rfid-prod --env-file .env.production \
 
 Review the `current` and `proposed` values, then repeat the same command with `--apply`. Apply mode writes a timestamped backup under `/var/lib/rfid-middleware/commissioning`, writes the reader, reads the settings back over serial, and reboots only after an exact match. Any validation, SDK, lock, or read-back error returns a non-zero process exit code.
 
+To configure reader-initiated mode, first inspect and preview the stored TCP report target:
+
+```bash
+docker compose -p rfid-prod --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.serial.yml \
+  run --rm --no-deps middleware \
+  reader client show --json --config /app/appsettings.json
+
+docker compose -p rfid-prod --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.serial.yml \
+  run --rm --no-deps middleware \
+  reader client configure --server-ip 203.0.113.20 --port 1969 \
+  --config /app/appsettings.json
+```
+
+Review the preview, rerun it with `--apply`, and power-cycle the reader. The command preserves UDP reporting, backs up both report options, verifies exact read-back, and only then reboots. Use `reader client disable` with the same preview/`--apply` workflow to turn off TCP client reporting without erasing the stored target.
+
 After reboot, verify the LAN endpoint while middleware remains stopped:
 
 ```bash
@@ -223,7 +258,7 @@ docker compose -p rfid-prod --env-file .env.production \
 
 If LAN verification fails, keep BAFO attached. Open the latest JSON file in `/var/lib/rfid-middleware/commissioning`, copy its `settings` values into `reader network configure`, preview the rollback without `--apply`, then repeat it with `--apply`. Run serial `show`, LAN `verify`, and the power-cycle check again before leaving the installation.
 
-The reader and middleware must have direct private routing on the warehouse LAN/VLAN. Do not publish port 1969 through Docker or the public firewall. Twingate remains on the middleware-to-backend and administrative paths. Copper Ethernet is limited to 100 metres per segment; use a switch or fiber/media converters for a longer path.
+For outbound `Tcp`, the reader and middleware must have direct private routing on the warehouse LAN/VLAN and reader port 1969 must never be public. For `TcpListener`, keep the listener private in production. A temporary VPS test may publish it only with a source-IP allowlist; the protocol has no application authentication or encryption. Twingate remains on the middleware-to-backend and administrative paths. Copper Ethernet is limited to 100 metres per segment; use a switch or fiber/media converters for a longer path.
 
 ### Ship without the mock backend
 
@@ -279,6 +314,9 @@ rfid-middleware reader watch --duration <seconds>
 rfid-middleware reader network show --json --config <file>
 rfid-middleware reader network configure --ip <ip> --mask <mask> --gateway <ip> [--port 1969] [--dns <ip>] [--apply] --config <file>
 rfid-middleware reader network verify --address <ip> [--port 1969] --config <file>
+rfid-middleware reader client show --json --config <file>
+rfid-middleware reader client configure --server-ip <ip> [--port 1969] [--apply] --config <file>
+rfid-middleware reader client disable [--apply] --config <file>
 rfid-middleware manifest status
 rfid-middleware manifest sync
 rfid-middleware audit stats
@@ -286,7 +324,7 @@ rfid-middleware db verify
 rfid-middleware diagnostics bundle --output <file>
 ```
 
-The `reader network` commands are standalone commissioning commands and require the middleware to be stopped. Other commands except `run` communicate with the running process through its Unix control socket. Commissioning does not require PostgreSQL or backend connectivity.
+The `reader network` and `reader client` commands are standalone commissioning commands and require the middleware to be stopped. Other commands except `run` communicate with the running process through its Unix control socket. Commissioning does not require PostgreSQL or backend connectivity.
 
 ## HTTP API used in development
 

@@ -35,6 +35,7 @@ ENV RFID_NATIVE_DIR=/app/native \
     LD_LIBRARY_PATH=/app/native \
     DOTNET_EnableDiagnostics=0
 USER rfid-middleware:rfid-middleware
+EXPOSE 1969
 ENTRYPOINT ["/app/rfid-middleware"]
 CMD ["run", "--config", "/app/appsettings.json"]
 HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=3 \

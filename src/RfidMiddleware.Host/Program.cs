@@ -14,6 +14,8 @@ if (command != "run")
 {
     if (command == "reader" && args.Length > 1 && string.Equals(args[1], "network", StringComparison.OrdinalIgnoreCase))
         return RunReaderNetworkCommand(args, configPath);
+    if (command == "reader" && args.Length > 1 && string.Equals(args[1], "client", StringComparison.OrdinalIgnoreCase))
+        return RunReaderClientCommand(args, configPath);
 
     await RunClientCommandAsync(command, args, configPath);
     return 0;
@@ -183,6 +185,8 @@ static void ValidateOptions(MiddlewareOptions value)
     if (value.DedupWindowMilliseconds is < 100 or > 60_000) throw new InvalidDataException("DedupWindowMilliseconds is invalid.");
     if (value.VendorReader.AntennaPower is < 1 or > 33)
         throw new InvalidDataException("VendorReader.AntennaPower must be between 1 and 33 dBm when configured.");
+    try { VendorReaderOptionsValidator.Validate(value.VendorReader); }
+    catch (ArgumentException ex) { throw new InvalidDataException(ex.Message, ex); }
     if (!Uri.TryCreate(value.Server.BaseUrl, UriKind.Absolute, out _)) throw new InvalidDataException("Server BaseUrl is invalid.");
 }
 
@@ -207,6 +211,9 @@ static async Task RunClientCommandAsync(string command, string[] values, string 
             rfid-middleware reader network show [--json] --config <file>
             rfid-middleware reader network configure --ip <ip> --mask <mask> --gateway <ip> [--port 1969] [--dns <ip>] [--apply] --config <file>
             rfid-middleware reader network verify --address <ip> [--port 1969] --config <file>
+            rfid-middleware reader client show [--json] --config <file>
+            rfid-middleware reader client configure --server-ip <ip> [--port 1969] [--apply] --config <file>
+            rfid-middleware reader client disable [--apply] --config <file>
             rfid-middleware manifest status|sync
             rfid-middleware audit stats
             rfid-middleware db verify
@@ -266,6 +273,61 @@ static int RunReaderNetworkCommand(string[] values, string config)
                 middleware.VendorReader.TimeoutMilliseconds,
                 middleware.ReaderLockFile),
             _ => throw new ArgumentException("Unknown reader network command. Use show, configure, or verify.")
+        };
+        Console.WriteLine(JsonSerializer.Serialize(output, new JsonSerializerOptions { WriteIndented = true }));
+        return 0;
+    }
+    catch (ArgumentException ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+        return 2;
+    }
+    catch (ReaderDeviceBusyException ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+        return 3;
+    }
+    catch (ReaderNetworkVerificationException ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+        return 4;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+        return 1;
+    }
+}
+
+static int RunReaderClientCommand(string[] values, string config)
+{
+    try
+    {
+        var action = values.Length > 2 ? values[2].ToLowerInvariant() : string.Empty;
+        var configuration = new ConfigurationBuilder()
+            .AddJsonFile(Path.GetFullPath(config), false)
+            .AddEnvironmentVariables("RFID_")
+            .Build();
+        var middleware = configuration.Get<MiddlewareOptions>() ?? new MiddlewareOptions();
+        var commissioner = new ReaderClientCommissioner();
+        object output = action switch
+        {
+            "show" => commissioner.ShowSerial(middleware.VendorReader, middleware.ReaderLockFile),
+            "configure" => commissioner.ConfigureSerial(
+                middleware.VendorReader,
+                middleware.ReaderLockFile,
+                new ReaderClientTargetSettings(
+                    RequireOption(values, "--server-ip"),
+                    GetIntOption(values, "--port", 1969),
+                    true),
+                values.Contains("--apply", StringComparer.OrdinalIgnoreCase),
+                middleware.CommissioningBackupDirectory),
+            "disable" => commissioner.DisableSerial(
+                middleware.VendorReader,
+                middleware.ReaderLockFile,
+                values.Contains("--apply", StringComparer.OrdinalIgnoreCase),
+                middleware.CommissioningBackupDirectory),
+            _ => throw new ArgumentException("Unknown reader client command. Use show, configure, or disable.")
         };
         Console.WriteLine(JsonSerializer.Serialize(output, new JsonSerializerOptions { WriteIndented = true }));
         return 0;

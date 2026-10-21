@@ -58,6 +58,18 @@ internal static unsafe partial class NativeMethods
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int StopListenAutoRead(int handle);
 
+    [LibraryImport(LibraryName, EntryPoint = "listen_vup_tcp_client_mode_reader")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int ListenTcpClientMode(int port, delegate* unmanaged[Cdecl]<int, void> callback);
+
+    [LibraryImport(LibraryName, EntryPoint = "stop_listen_vup_tcp_client_mode_reader")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void StopListenTcpClientMode(int port);
+
+    [LibraryImport(LibraryName, EntryPoint = "set_disconnect_callback")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void SetDisconnectCallback(int handle, delegate* unmanaged[Cdecl]<void> callback);
+
     [LibraryImport(LibraryName, EntryPoint = "get_ant_count")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int GetAntennaCount(int handle, out int count);
@@ -91,6 +103,14 @@ internal static unsafe partial class NativeMethods
     internal static partial int SetNetworkParamWithDns(
         int handle, string ip, string mask, string gateway, int port, nint dns);
 
+    [LibraryImport(LibraryName, EntryPoint = "get_report_option")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int GetReportOptions(int handle, out NativeReportOption udp, out NativeReportOption tcp);
+
+    [LibraryImport(LibraryName, EntryPoint = "set_report_option")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int SetReportOptions(int handle, NativeReportOption udp, NativeReportOption tcp);
+
     [LibraryImport(LibraryName, EntryPoint = "reboot")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int Reboot(int handle);
@@ -100,6 +120,14 @@ internal enum NativeTransport { Tcp, Udp }
 internal enum NativeWorkMode { Command, Auto, Trigger, BidirectionalTrigger }
 internal enum NativeRelayStatus { Closed, Open }
 internal enum NativeBuzzerStatus { On, Off }
+
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct NativeReportOption
+{
+    internal fixed byte Ip[64];
+    internal int Port;
+    internal int Enable;
+}
 
 [StructLayout(LayoutKind.Sequential)]
 internal struct NativeNetworkParam
@@ -141,11 +169,13 @@ internal unsafe struct NativeAutoReadOutput
 
 internal sealed class ReaderSafeHandle : SafeHandleZeroOrMinusOneIsInvalid
 {
+    private Action<int>? _disconnect;
+
     private ReaderSafeHandle() : base(true) { }
 
-    internal static ReaderSafeHandle Create(int value)
+    internal static ReaderSafeHandle Create(int value, Action<int>? disconnect = null)
     {
-        var result = new ReaderSafeHandle();
+        var result = new ReaderSafeHandle { _disconnect = disconnect };
         result.SetHandle(value);
         return result;
     }
@@ -154,7 +184,9 @@ internal sealed class ReaderSafeHandle : SafeHandleZeroOrMinusOneIsInvalid
 
     protected override bool ReleaseHandle()
     {
-        NativeMethods.Disconnect(Value);
+        if (_disconnect is null) NativeMethods.Disconnect(Value);
+        else _disconnect(Value);
+        _disconnect = null;
         return true;
     }
 }

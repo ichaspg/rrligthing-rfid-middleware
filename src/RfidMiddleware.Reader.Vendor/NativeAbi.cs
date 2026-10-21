@@ -25,7 +25,16 @@ public static class NativeAbi
         ["dns"] = NetworkOffset(nameof(NativeNetworkParam.Dns))
     };
 
+    public static IReadOnlyDictionary<string, int> DescribeReportOption() => new Dictionary<string, int>
+    {
+        ["size"] = Marshal.SizeOf<NativeReportOption>(),
+        ["ip"] = ReportOffset(nameof(NativeReportOption.Ip)),
+        ["port"] = ReportOffset(nameof(NativeReportOption.Port)),
+        ["enable"] = ReportOffset(nameof(NativeReportOption.Enable))
+    };
+
     private static int Offset(string field) => checked((int)Marshal.OffsetOf<NativeAutoReadOutput>(field));
     private static int NetworkOffset(string field) => checked((int)Marshal.OffsetOf<NativeNetworkParam>(field));
+    private static int ReportOffset(string field) => checked((int)Marshal.OffsetOf<NativeReportOption>(field));
 }
 
