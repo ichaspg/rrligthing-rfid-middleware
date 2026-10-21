@@ -10,3 +10,5 @@ services:
     ports:
       - "${RFID_READER_BIND_ADDRESS:-0.0.0.0}:${RFID_READER_PORT:-1969}:${RFID_READER_PORT:-1969}/tcp"
       - "${RFID_API_BIND_ADDRESS:-0.0.0.0}:${RFID_API_PORT:-8080}:${RFID_API_PORT:-8080}/tcp"
+    healthcheck:
+      test: ["CMD", "/app/rfid-middleware", "liveness", "--config", "/app/appsettings.json"]

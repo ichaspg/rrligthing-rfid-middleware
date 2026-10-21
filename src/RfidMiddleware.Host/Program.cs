@@ -299,6 +299,7 @@ static async Task RunClientCommandAsync(string command, string[] values, string 
         Console.WriteLine("""
             rfid-middleware run --config <file>
             rfid-middleware status [--json]
+            rfid-middleware liveness
             rfid-middleware healthcheck
             rfid-middleware version
             rfid-middleware reader test|watch [--duration <seconds>]
@@ -323,6 +324,7 @@ static async Task RunClientCommandAsync(string command, string[] values, string 
     string output = command switch
     {
         "status" => await client.GetAsync("/status"),
+        "liveness" => await client.GetAsync("/health/live"),
         "healthcheck" => await client.GetAsync("/healthz"),
         "reader" when subcommand == "test" => await client.GetAsync("/reader/test"),
         "reader" when subcommand == "watch" => await WatchAsync(client, values),

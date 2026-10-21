@@ -102,6 +102,7 @@ public sealed class PackagingContractTests
         Assert.Contains("RFID_API_BIND_ADDRESS", vps, StringComparison.Ordinal);
         Assert.Contains("RFID_API_PORT", vps, StringComparison.Ordinal);
         Assert.Contains("RFID_READER_BIND_ADDRESS", vps, StringComparison.Ordinal);
+        Assert.Contains("\"liveness\"", vps, StringComparison.Ordinal);
     }
 
     private static string FindRoot()
