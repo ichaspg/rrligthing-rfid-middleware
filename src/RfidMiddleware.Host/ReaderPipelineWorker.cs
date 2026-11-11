@@ -12,7 +12,8 @@ public sealed class ReaderPipelineWorker(
     IEventRepository events,
     ValidationEngine validation,
     IClock clock,
-    RuntimeState state) : BackgroundService
+    RuntimeState state,
+    IScanSessionRecorder scanSessions) : BackgroundService
 {
     private readonly Channel<RawTagRead> _channel = Channel.CreateBounded<RawTagRead>(new BoundedChannelOptions(10_000)
     {
@@ -44,7 +45,9 @@ public sealed class ReaderPipelineWorker(
                 var batch = new List<ScanEvent>(256);
                 while (_channel.Reader.TryRead(out var read))
                 {
-                    await AlarmIfRequiredAsync(read.Epc, read.ObservedAt, stoppingToken);
+                    var decision = validation.Validate(read.Epc, read.ObservedAt);
+                    scanSessions.Record(read, decision);
+                    await AlarmIfRequiredAsync(read.Epc, read.ObservedAt, decision, stoppingToken);
                     foreach (var observation in aggregator.Add(read, validation.Snapshot?.Version))
                         batch.Add(CreateEvent(observation));
                 }
@@ -70,6 +73,7 @@ public sealed class ReaderPipelineWorker(
             var finalBatch = new List<ScanEvent>();
             while (_channel.Reader.TryRead(out var finalRead))
             {
+                scanSessions.Record(finalRead, validation.Validate(finalRead.Epc, finalRead.ObservedAt));
                 foreach (var observation in aggregator.Add(finalRead, validation.Snapshot?.Version))
                 {
                     try { finalBatch.Add(CreateEvent(observation)); }
@@ -109,9 +113,9 @@ public sealed class ReaderPipelineWorker(
             EventSyncState.LocalOnly);
     }
 
-    private async Task AlarmIfRequiredAsync(string epc, DateTimeOffset observedAt, CancellationToken token)
+    private async Task AlarmIfRequiredAsync(
+        string epc, DateTimeOffset observedAt, ValidationDecision decision, CancellationToken token)
     {
-        var decision = validation.Validate(epc, observedAt);
         var key = string.IsNullOrEmpty(decision.NormalizedEpc) ? epc : decision.NormalizedEpc;
         if (decision.Outcome != ValidationOutcome.Authorized && ShouldAlarm(key, observedAt))
         {

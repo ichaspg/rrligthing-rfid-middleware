@@ -1,0 +1,647 @@
+{
+  "info": {
+    "_postman_id": "5de70e28-997c-44e0-a157-9831a6034138",
+    "name": "RFID Middleware Public API",
+    "description": "Complete public HTTP API collection for the RFID middleware. The prepared ACTIVE manifest authorizes E280699500004005F0A661BB and E28068940000503673E52C79. Set apiToken before sending protected requests. Internal operational endpoints are intentionally unavailable on the public port and are accessed only through the server's Unix control socket.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{apiToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.collectionVariables.get('baseUrl')) {",
+          "    pm.collectionVariables.set('baseUrl', 'http://129.212.229.37:8080');",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://129.212.229.37:8080",
+      "type": "string"
+    },
+    {
+      "key": "middlewareId",
+      "value": "WH-A-GATE-01",
+      "type": "string"
+    },
+    {
+      "key": "apiToken",
+      "value": "REPLACE_WITH_RFID_API_TOKEN",
+      "type": "string"
+    },
+    {
+      "key": "manifestId",
+      "value": "SJ-2611-0005",
+      "type": "string"
+    },
+    {
+      "key": "transportId",
+      "value": "SJ-2611-0005",
+      "type": "string"
+    },
+    {
+      "key": "activeVersion",
+      "value": "57",
+      "type": "string"
+    },
+    {
+      "key": "completionVersion",
+      "value": "58",
+      "type": "string"
+    },
+    {
+      "key": "preparedVersion",
+      "value": "57",
+      "type": "string"
+    },
+    {
+      "key": "expiresAt",
+      "value": "2026-11-07T16:59:59Z",
+      "type": "string"
+    },
+    {
+      "key": "existingInventoryId",
+      "value": "AST-0021-001",
+      "type": "string"
+    },
+    {
+      "key": "existingEpc",
+      "value": "E280699500004005F0A661BB",
+      "type": "string"
+    },
+    {
+      "key": "newInventoryId",
+      "value": "POSTMAN-EPC-002",
+      "type": "string"
+    },
+    {
+      "key": "newEpc",
+      "value": "E28068940000503673E52C79",
+      "type": "string"
+    },
+    {
+      "key": "manifestChecksum",
+      "value": "AFD960751BF4B83FC746D382990E7B13959CDA68F3EC52D30BD4B1B2AEDDFB19",
+      "type": "string"
+    },
+    {
+      "key": "allowCompletion",
+      "value": "false",
+      "type": "string"
+    },
+    {
+      "key": "scanSessionId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Public API - Safe Flow",
+      "description": "Run these requests in order. They verify liveness, discover the latest version, activate the updated manifest, verify it, and test idempotent replay.",
+      "item": [
+        {
+          "name": "1. Health - Live",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health/live",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health",
+                "live"
+              ]
+            },
+            "description": "Unauthenticated process-liveness check. It does not prove that the physical reader is connected."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Middleware is running in push mode', () => {",
+                  "    pm.expect(body.status).to.eql('running');",
+                  "    pm.expect(body.mode).to.eql('push');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Manifest - Get Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/middleware/{{middlewareId}}/manifest/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "middleware",
+                "{{middlewareId}}",
+                "manifest",
+                "status"
+              ]
+            },
+            "description": "Returns the current authorization state and latest applied manifest version. The test script prepares the next two version numbers."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Middleware ID matches', () => pm.expect(body.middlewareId).to.eql(pm.collectionVariables.get('middlewareId')));",
+                  "const latest = Number(body.latestManifestVersion || 0);",
+                  "pm.collectionVariables.set('activeVersion', String(latest + 1));",
+                  "pm.collectionVariables.set('completionVersion', String(latest + 2));",
+                  "console.log(`Prepared ACTIVE version ${latest + 1} and COMPLETED version ${latest + 2}`);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Manifest - Activate With Authorized EPC",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"manifestId\": \"{{manifestId}}\",\n  \"transportId\": \"{{transportId}}\",\n  \"version\": {{activeVersion}},\n  \"status\": \"ACTIVE\",\n  \"itemCount\": 2,\n  \"checksum\": \"{{manifestChecksum}}\",\n  \"expiresAt\": \"{{expiresAt}}\",\n  \"items\": [\n    {\n      \"inventoryId\": \"{{existingInventoryId}}\",\n      \"epc\": \"{{existingEpc}}\"\n    },\n    {\n      \"inventoryId\": \"{{newInventoryId}}\",\n      \"epc\": \"{{newEpc}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/middleware/{{middlewareId}}/manifest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "middleware",
+                "{{middlewareId}}",
+                "manifest"
+              ]
+            },
+            "description": "Creates the next ACTIVE manifest authorizing E280699500004005F0A661BB and E28068940000503673E52C79. The expiry is prepared as 24 hours from the first attempt for this version."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const version = pm.collectionVariables.get('activeVersion') || '57';",
+                  "if (pm.collectionVariables.get('preparedVersion') !== version || !pm.collectionVariables.get('expiresAt')) {",
+                  "    pm.collectionVariables.set('expiresAt', new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString());",
+                  "    pm.collectionVariables.set('preparedVersion', version);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Manifest is active', () => pm.expect(body.status).to.eql('ACTIVE'));",
+                  "pm.test('Manifest was applied or was an exact retry', () => pm.expect(body.applied || body.alreadyApplied).to.be.true);",
+                  "pm.collectionVariables.set('activeVersion', String(body.version));",
+                  "pm.collectionVariables.set('completionVersion', String(Number(body.version) + 1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Manifest - Verify Active Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/middleware/{{middlewareId}}/manifest/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "middleware",
+                "{{middlewareId}}",
+                "manifest",
+                "status"
+              ]
+            },
+            "description": "Confirms the newly submitted version is the active authorization manifest."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Authorization state is Active', () => pm.expect(body.authorizationState).to.eql('Active'));",
+                  "pm.test('Expected manifest is active', () => {",
+                  "    pm.expect(body.activeManifestId).to.eql(pm.collectionVariables.get('manifestId'));",
+                  "    pm.expect(String(body.activeManifestVersion)).to.eql(pm.collectionVariables.get('activeVersion'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Manifest - List Authorized Tags",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/middleware/{{middlewareId}}/manifest/items?limit=100&version={{activeVersion}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "middleware",
+                "{{middlewareId}}",
+                "manifest",
+                "items"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100"
+                },
+                {
+                  "key": "version",
+                  "value": "{{activeVersion}}"
+                }
+              ]
+            },
+            "description": "Returns the currently authorized inventory IDs and EPCs. Use nextAfterEpc for the next page when it is not null."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Authorized items are returned', () => pm.expect(body.items).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Manifest - Replay Exact Request (Idempotency)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"manifestId\": \"{{manifestId}}\",\n  \"transportId\": \"{{transportId}}\",\n  \"version\": {{activeVersion}},\n  \"status\": \"ACTIVE\",\n  \"itemCount\": 2,\n  \"checksum\": \"{{manifestChecksum}}\",\n  \"expiresAt\": \"{{expiresAt}}\",\n  \"items\": [\n    {\n      \"inventoryId\": \"{{existingInventoryId}}\",\n      \"epc\": \"{{existingEpc}}\"\n    },\n    {\n      \"inventoryId\": \"{{newInventoryId}}\",\n      \"epc\": \"{{newEpc}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/middleware/{{middlewareId}}/manifest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "middleware",
+                "{{middlewareId}}",
+                "manifest"
+              ]
+            },
+            "description": "Replays the exact ACTIVE payload. A correct idempotent retry returns HTTP 200 with alreadyApplied=true and applied=false."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Exact retry is idempotent', () => {",
+                  "    pm.expect(body.applied).to.be.false;",
+                  "    pm.expect(body.alreadyApplied).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Realtime Scan Session",
+      "description": "Start or resume the single active scan session, inspect live counts and EPCs, reset it, and complete it.",
+      "item": [
+        {
+          "name": "1. Start or Resume Session",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/middleware/{{middlewareId}}/scan-sessions", "host": ["{{baseUrl}}"], "path": ["api", "v1", "middleware", "{{middlewareId}}", "scan-sessions"] },
+            "description": "Returns 201 for a new session or 200 when resuming the active session."
+          },
+          "response": [],
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.expect(pm.response.code).to.be.oneOf([200, 201]);", "const body = pm.response.json();", "pm.collectionVariables.set('scanSessionId', body.sessionId);", "pm.test('Session is active', () => pm.expect(body.status).to.eql('Active'));"] } }]
+        },
+        {
+          "name": "2. Get Active Counts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/middleware/{{middlewareId}}/scan-sessions/active", "host": ["{{baseUrl}}"], "path": ["api", "v1", "middleware", "{{middlewareId}}", "scan-sessions", "active"] },
+            "description": "Returns rawReadCount, uniqueEpcCount, generation, and lastSequence."
+          },
+          "response": []
+        },
+        {
+          "name": "3. List Scanned EPCs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/middleware/{{middlewareId}}/scan-sessions/{{scanSessionId}}/items?limit=100", "host": ["{{baseUrl}}"], "path": ["api", "v1", "middleware", "{{middlewareId}}", "scan-sessions", "{{scanSessionId}}", "items"], "query": [{ "key": "limit", "value": "100" }] },
+            "description": "Lists EPCs in stable EPC order. Use nextAfterEpc as afterEpc for the next page."
+          },
+          "response": []
+        },
+        {
+          "name": "4. Stream Realtime Events (SSE)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "text/event-stream", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/middleware/{{middlewareId}}/scan-sessions/{{scanSessionId}}/stream", "host": ["{{baseUrl}}"], "path": ["api", "v1", "middleware", "{{middlewareId}}", "scan-sessions", "{{scanSessionId}}", "stream"] },
+            "description": "Keeps the request open and displays snapshot, tag, counts, reset, completed, and heartbeat messages."
+          },
+          "response": []
+        },
+        {
+          "name": "5. Reset Session",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/middleware/{{middlewareId}}/scan-sessions/{{scanSessionId}}/reset", "host": ["{{baseUrl}}"], "path": ["api", "v1", "middleware", "{{middlewareId}}", "scan-sessions", "{{scanSessionId}}", "reset"] },
+            "description": "Clears counts and EPCs and increments generation while retaining the session ID."
+          },
+          "response": []
+        },
+        {
+          "name": "6. Complete Session",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/middleware/{{middlewareId}}/scan-sessions/{{scanSessionId}}/complete", "host": ["{{baseUrl}}"], "path": ["api", "v1", "middleware", "{{middlewareId}}", "scan-sessions", "{{scanSessionId}}", "complete"] },
+            "description": "Flushes pending writes, completes the session, and closes stream subscribers. Repeating it is safe."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Optional Lifecycle",
+      "description": "Completion removes the active authorization manifest. The request is guarded and will not run until allowCompletion is explicitly set to true.",
+      "item": [
+        {
+          "name": "OPTIONAL - Manifest - Complete and Deactivate",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"manifestId\": \"{{manifestId}}\",\n  \"transportId\": null,\n  \"version\": {{completionVersion}},\n  \"status\": \"COMPLETED\",\n  \"itemCount\": 0,\n  \"checksum\": null,\n  \"expiresAt\": null,\n  \"items\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/middleware/{{middlewareId}}/manifest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "middleware",
+                "{{middlewareId}}",
+                "manifest"
+              ]
+            },
+            "description": "DANGER: Completes the active manifest and deauthorizes every EPC. Set collection variable allowCompletion=true only when the transport is finished."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.collectionVariables.get('allowCompletion') !== 'true') {",
+                  "    throw new Error('Completion blocked. Set collection variable allowCompletion=true only when you intentionally want to deactivate the manifest.');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Manifest is completed', () => pm.expect(body.status).to.eql('COMPLETED'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Security and Routing Checks",
+      "description": "Non-mutating checks for authentication, middleware routing, and the public API boundary.",
+      "item": [
+        {
+          "name": "Manifest Status - Missing Token (Expect 401)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/middleware/{{middlewareId}}/manifest/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "middleware",
+                "{{middlewareId}}",
+                "manifest",
+                "status"
+              ]
+            },
+            "description": "Verifies protected API routes reject requests without a bearer token."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Manifest Status - Unknown Middleware (Expect 404)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/middleware/UNKNOWN-MIDDLEWARE/manifest/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "middleware",
+                "UNKNOWN-MIDDLEWARE",
+                "manifest",
+                "status"
+              ]
+            },
+            "description": "Verifies the route rejects an unknown middleware ID."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Internal Status Is Not Public (Expect 404)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "status"
+              ]
+            },
+            "description": "Confirms operational endpoints remain private to the Unix control socket and are not exposed on the public HTTP port."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

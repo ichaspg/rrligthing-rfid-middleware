@@ -58,7 +58,11 @@ builder.Services.AddSingleton<ManifestSyncTrigger>();
 builder.Services.AddSingleton(sp => new PostgresMiddlewareStore(options.DatabaseConnectionString));
 builder.Services.AddSingleton<IManifestRepository>(sp => sp.GetRequiredService<PostgresMiddlewareStore>());
 builder.Services.AddSingleton<IEventRepository>(sp => sp.GetRequiredService<PostgresMiddlewareStore>());
+builder.Services.AddSingleton<IScanSessionRepository>(sp => sp.GetRequiredService<PostgresMiddlewareStore>());
 builder.Services.AddSingleton<ManifestPushService>();
+builder.Services.AddSingleton<ScanSessionService>();
+builder.Services.AddSingleton<IScanSessionRecorder>(sp => sp.GetRequiredService<ScanSessionService>());
+builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<ScanSessionService>());
 if (options.ManifestMode == ManifestMode.Pull)
 {
     builder.Services.AddSingleton(sp =>
@@ -93,6 +97,7 @@ builder.Services.AddHostedService<ReaderPipelineWorker>();
 var app = builder.Build();
 var startupStore = app.Services.GetRequiredService<PostgresMiddlewareStore>();
 await startupStore.InitializeAsync();
+await app.Services.GetRequiredService<ScanSessionService>().InitializeAsync();
 var startupAuthorization = await startupStore.GetAuthorizationStateAsync();
 var startupManifest = await startupStore.GetActiveAsync();
 var startupState = app.Services.GetRequiredService<RuntimeState>();
@@ -189,6 +194,81 @@ if (options.ManifestMode == ManifestMode.Push)
                 state.LastManifestSync,
                 state.LastManifestError
             }));
+    app.MapGet("/api/v1/middleware/{middlewareId}/manifest/items", async (
+        string middlewareId, int? limit, string? afterEpc, long? version,
+        IManifestRepository repository, CancellationToken token) =>
+    {
+        if (!string.Equals(middlewareId, options.Id, StringComparison.Ordinal)) return Results.NotFound();
+        return await GetManifestItemsAsync(repository, limit, afterEpc, version, token);
+    });
+    app.MapPost("/api/v1/middleware/{middlewareId}/scan-sessions", async (
+        string middlewareId, ScanSessionService service, CancellationToken token) =>
+    {
+        if (!string.Equals(middlewareId, options.Id, StringComparison.Ordinal)) return Results.NotFound();
+        var result = await service.StartSessionAsync(token);
+        var payload = ScanSessionStartPayload(result.Session, result.Created);
+        return result.Created
+            ? Results.Created($"/api/v1/middleware/{middlewareId}/scan-sessions/{result.Session.SessionId}", payload)
+            : Results.Ok(payload);
+    });
+    app.MapGet("/api/v1/middleware/{middlewareId}/scan-sessions/active", (
+        string middlewareId, ScanSessionService service) =>
+    {
+        if (!string.Equals(middlewareId, options.Id, StringComparison.Ordinal)) return Results.NotFound();
+        var session = service.GetActive();
+        return session is null
+            ? Results.NotFound(new { error = "No active scan session exists." })
+            : Results.Ok(ScanSessionPayload(session));
+    });
+    app.MapGet("/api/v1/middleware/{middlewareId}/scan-sessions/{sessionId}/items", async (
+        string middlewareId, string sessionId, int? limit, string? afterEpc,
+        ScanSessionService service, CancellationToken token) =>
+    {
+        if (!string.Equals(middlewareId, options.Id, StringComparison.Ordinal)) return Results.NotFound();
+        var pageValidation = ValidateScanSessionPageRequest(limit, afterEpc);
+        if (pageValidation.Error is not null) return Results.BadRequest(new { error = pageValidation.Error });
+        var page = await service.GetItemsAsync(sessionId, pageValidation.Limit, pageValidation.AfterEpc, token);
+        return page is null
+            ? Results.NotFound(new { error = $"Scan session '{sessionId}' was not found." })
+            : Results.Ok(new
+            {
+                page.SessionId,
+                page.Generation,
+                page.RawReadCount,
+                page.UniqueEpcCount,
+                page.LastSequence,
+                items = page.Items.Select(item => new
+                {
+                    item.Epc,
+                    item.FirstSeenAt,
+                    item.LastSeenAt,
+                    item.ReadCount,
+                    authorizationOutcome = item.LatestOutcome.ToString(),
+                    item.AntennaIds,
+                    item.StrongestRssi
+                }),
+                page.NextAfterEpc
+            });
+    });
+    app.MapGet("/api/v1/middleware/{middlewareId}/scan-sessions/{sessionId}/stream", async (
+        HttpContext context, string middlewareId, string sessionId, ScanSessionService service) =>
+        await StreamScanSessionAsync(context, middlewareId, options.Id, sessionId, service));
+    app.MapPost("/api/v1/middleware/{middlewareId}/scan-sessions/{sessionId}/reset", async (
+        string middlewareId, string sessionId, ScanSessionService service, CancellationToken token) =>
+    {
+        if (!string.Equals(middlewareId, options.Id, StringComparison.Ordinal)) return Results.NotFound();
+        try { return Results.Ok(ScanSessionPayload(await service.ResetAsync(sessionId, token))); }
+        catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+        catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+    });
+    app.MapPost("/api/v1/middleware/{middlewareId}/scan-sessions/{sessionId}/complete", async (
+        string middlewareId, string sessionId, ScanSessionService service, CancellationToken token) =>
+    {
+        if (!string.Equals(middlewareId, options.Id, StringComparison.Ordinal)) return Results.NotFound();
+        try { return Results.Ok(ScanSessionPayload(await service.CompleteAsync(sessionId, token))); }
+        catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+        catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+    });
     app.MapGet("/health/live", () => Results.Ok(new { status = "running", mode = "push" }));
 }
 
@@ -281,6 +361,149 @@ static void ValidateOptions(MiddlewareOptions value)
             throw new InvalidDataException("PublicApi.TokenEnvironmentVariable is required.");
         if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(value.PublicApi.TokenEnvironmentVariable)))
             throw new InvalidDataException($"Environment variable {value.PublicApi.TokenEnvironmentVariable} is required in Push manifest mode.");
+    }
+}
+
+static async Task<IResult> GetManifestItemsAsync(
+    IManifestRepository repository, int? requestedLimit, string? requestedAfterEpc, long? expectedVersion,
+    CancellationToken token)
+{
+    var validation = ValidateItemPageRequest(requestedLimit, requestedAfterEpc, expectedVersion);
+    if (validation.Error is not null) return Results.BadRequest(new { error = validation.Error });
+    var page = await repository.GetActiveItemsPageAsync(validation.Limit, validation.AfterEpc, token);
+    return ManifestItemsResult(page, expectedVersion);
+}
+
+static (int Limit, string? AfterEpc, string? Error) ValidateItemPageRequest(
+    int? requestedLimit, string? requestedAfterEpc, long? expectedVersion)
+{
+    var limit = requestedLimit ?? 100;
+    if (limit is < 1 or > 1000) return (limit, null, "Limit must be between 1 and 1000.");
+    if (expectedVersion is < 1) return (limit, null, "Version must be positive when provided.");
+    if (string.IsNullOrWhiteSpace(requestedAfterEpc)) return (limit, null, null);
+    return EpcNormalizer.TryNormalize(requestedAfterEpc, out var afterEpc)
+        ? (limit, afterEpc, null)
+        : (limit, null, "AfterEpc must be a valid hexadecimal EPC.");
+}
+
+static IResult ManifestItemsResult(ManifestItemsPage? page, long? expectedVersion)
+{
+    if (page is null) return Results.NotFound(new { error = "No active manifest exists." });
+    if (expectedVersion is not null && page.Version != expectedVersion)
+        return Results.Conflict(new
+        {
+            error = "The active manifest version changed while the item list was being read.",
+            currentVersion = page.Version
+        });
+    return Results.Ok(new
+    {
+        page.ManifestId,
+        page.TransportId,
+        page.Version,
+        status = "ACTIVE",
+        page.ExpiresAt,
+        isEffective = page.ExpiresAt > DateTimeOffset.UtcNow,
+        page.ItemCount,
+        items = page.Items,
+        page.NextAfterEpc
+    });
+}
+
+static object ScanSessionPayload(ScanSessionSnapshot session) => new
+{
+    session.SessionId,
+    status = session.Status.ToString(),
+    session.Generation,
+    session.StartedAt,
+    session.ResetAt,
+    session.CompletedAt,
+    session.RawReadCount,
+    session.UniqueEpcCount,
+    session.LastSequence,
+    session.UpdatedAt
+};
+
+static object ScanSessionStartPayload(ScanSessionSnapshot session, bool created) => new
+{
+    session.SessionId,
+    status = session.Status.ToString(),
+    session.Generation,
+    session.StartedAt,
+    session.ResetAt,
+    session.CompletedAt,
+    session.RawReadCount,
+    session.UniqueEpcCount,
+    session.LastSequence,
+    session.UpdatedAt,
+    created
+};
+
+static (int Limit, string? AfterEpc, string? Error) ValidateScanSessionPageRequest(
+    int? requestedLimit, string? requestedAfterEpc)
+{
+    var limit = requestedLimit ?? 100;
+    if (limit is < 1 or > 1000) return (limit, null, "Limit must be between 1 and 1000.");
+    if (requestedAfterEpc is null) return (limit, null, null);
+    if (string.IsNullOrWhiteSpace(requestedAfterEpc) || requestedAfterEpc.Length > 512)
+        return (limit, null, "AfterEpc must be between 1 and 512 characters.");
+    return (limit, requestedAfterEpc, null);
+}
+
+static async Task StreamScanSessionAsync(
+    HttpContext context, string middlewareId, string configuredMiddlewareId, string sessionId,
+    ScanSessionService service)
+{
+    if (!string.Equals(middlewareId, configuredMiddlewareId, StringComparison.Ordinal))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    var subscription = service.Subscribe(sessionId);
+    if (subscription is null)
+    {
+        var session = await service.GetSessionAsync(sessionId, context.RequestAborted);
+        context.Response.StatusCode = session is null ? StatusCodes.Status404NotFound : StatusCodes.Status409Conflict;
+        await context.Response.WriteAsJsonAsync(new
+        {
+            error = session is null
+                ? $"Scan session '{sessionId}' was not found."
+                : "Only an active scan session can be streamed."
+        }, context.RequestAborted);
+        return;
+    }
+
+    await using (subscription)
+    {
+        var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        context.Response.StatusCode = StatusCodes.Status200OK;
+        context.Response.ContentType = "text/event-stream";
+        context.Response.Headers.CacheControl = "no-cache, no-store";
+        context.Response.Headers.Append("X-Accel-Buffering", "no");
+        await context.Response.StartAsync(context.RequestAborted);
+        try
+        {
+            while (!context.RequestAborted.IsCancellationRequested)
+            {
+                var available = subscription.Reader.WaitToReadAsync(context.RequestAborted).AsTask();
+                var heartbeat = Task.Delay(TimeSpan.FromSeconds(15), context.RequestAborted);
+                if (await Task.WhenAny(available, heartbeat) == heartbeat)
+                {
+                    await context.Response.WriteAsync(": heartbeat\n\n", context.RequestAborted);
+                    await context.Response.Body.FlushAsync(context.RequestAborted);
+                    continue;
+                }
+                if (!await available) break;
+                while (subscription.Reader.TryRead(out var message))
+                {
+                    await context.Response.WriteAsync($"id: {message.Sequence}\n", context.RequestAborted);
+                    await context.Response.WriteAsync($"event: {message.Type}\n", context.RequestAborted);
+                    await context.Response.WriteAsync($"data: {JsonSerializer.Serialize(message.Data, jsonOptions)}\n\n", context.RequestAborted);
+                }
+                await context.Response.Body.FlushAsync(context.RequestAborted);
+            }
+        }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) { }
     }
 }
 

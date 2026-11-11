@@ -136,6 +136,10 @@ public sealed class ManifestPushServiceTests
             return Task.CompletedTask;
         }
 
+        public Task<ManifestItemsPage?> GetActiveItemsPageAsync(
+            int limit, string? afterEpc, CancellationToken cancellationToken = default) =>
+            Task.FromResult<ManifestItemsPage?>(null);
+
         public Task DeactivateAsync(ManifestCompletion completion, CancellationToken cancellationToken = default)
         {
             if (_authorization.Version is long version && completion.Version <= version)

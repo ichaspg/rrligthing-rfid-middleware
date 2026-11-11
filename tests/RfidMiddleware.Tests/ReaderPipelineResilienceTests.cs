@@ -24,7 +24,7 @@ public sealed class ReaderPipelineResilienceTests
         var worker = new ReaderPipelineWorker(
             NullLogger<ReaderPipelineWorker>.Instance,
             new MiddlewareOptions { DedupWindowMilliseconds = 100 },
-            reader, alarm, events, validation, clock, state);
+            reader, alarm, events, validation, clock, state, new NoOpScanSessionRecorder());
 
         await worker.StartAsync(CancellationToken.None);
         reader.Emit("E20042042AE06416015CFC96");
@@ -35,6 +35,11 @@ public sealed class ReaderPipelineResilienceTests
         Assert.Equal("relay unsupported", state.LastSystemError);
         Assert.True(reader.Health.InventoryRunning);
         await worker.StopAsync(CancellationToken.None);
+    }
+
+    private sealed class NoOpScanSessionRecorder : IScanSessionRecorder
+    {
+        public void Record(RawTagRead read, ValidationDecision decision) { }
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)

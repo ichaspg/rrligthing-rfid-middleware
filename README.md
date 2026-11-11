@@ -333,7 +333,18 @@ Direct middleware API in Push mode:
 
 - `PUT /api/v1/middleware/{id}/manifest` — validate, persist, and immediately activate/complete a manifest.
 - `GET /api/v1/middleware/{id}/manifest/status` — confirm the applied authorization version.
+- `GET /api/v1/middleware/{id}/manifest/items` — page through the active manifest's authorized tags.
+- `POST /api/v1/middleware/{id}/scan-sessions` — start a scan session or resume the active one.
+- `GET /api/v1/middleware/{id}/scan-sessions/active` — read the active session and its raw/unique counts.
+- `GET /api/v1/middleware/{id}/scan-sessions/{sessionId}/items` — page through detected EPCs and their latest metadata.
+- `GET /api/v1/middleware/{id}/scan-sessions/{sessionId}/stream` — receive authenticated SSE snapshot, tag, count, reset, and completion events.
+- `POST /api/v1/middleware/{id}/scan-sessions/{sessionId}/reset` — clear counts and EPCs while retaining the session ID.
+- `POST /api/v1/middleware/{id}/scan-sessions/{sessionId}/complete` — durably complete the active session.
 - `GET /health/live` — process liveness without scan or reader details.
+
+The manifest item endpoint accepts `limit` (default 100, maximum 1000), `afterEpc`, and an optional `version`. Responses are ordered by EPC and include `nextAfterEpc`. Pass the returned version on later pages to detect a concurrent manifest replacement.
+
+Only one scan session can be active. Every reader observation increments `rawReadCount`, while a normalized EPC increments `uniqueEpcCount` only on its first detection in the current generation. The SSE stream emits one `tag` event per newly discovered EPC and throttles `counts` events to four per second. It also sends a heartbeat every 15 seconds. Disconnecting the frontend does not stop counting; reconnect to the stream for a fresh snapshot and reload the paginated item list. Completed sessions and their local items are retained for seven days.
 
 Development reference backend in Pull mode:
 

@@ -88,3 +88,59 @@ public sealed record AuthorizationStateSnapshot(
     DateTimeOffset UpdatedAt);
 
 public sealed record ManifestCompletion(string ManifestId, long Version);
+
+public sealed record ManifestItemsPage(
+    string ManifestId,
+    string TransportId,
+    long Version,
+    DateTimeOffset ExpiresAt,
+    int ItemCount,
+    IReadOnlyList<ManifestItem> Items,
+    string? NextAfterEpc);
+
+public enum ScanSessionStatus { Active, Completed }
+
+public sealed record ScanSessionSnapshot(
+    string SessionId,
+    ScanSessionStatus Status,
+    int Generation,
+    DateTimeOffset StartedAt,
+    DateTimeOffset? ResetAt,
+    DateTimeOffset? CompletedAt,
+    long RawReadCount,
+    int UniqueEpcCount,
+    long LastSequence,
+    DateTimeOffset UpdatedAt);
+
+public sealed record ScanSessionStartResult(ScanSessionSnapshot Session, bool Created);
+
+public sealed record ScanSessionObservation(
+    string SessionId,
+    int Generation,
+    long Sequence,
+    string Epc,
+    ValidationOutcome Outcome,
+    int AntennaId,
+    int Rssi,
+    DateTimeOffset ObservedAt,
+    long RawReadCount,
+    int UniqueEpcCount,
+    bool IsNewEpc);
+
+public sealed record ScanSessionItem(
+    string Epc,
+    DateTimeOffset FirstSeenAt,
+    DateTimeOffset LastSeenAt,
+    long ReadCount,
+    ValidationOutcome LatestOutcome,
+    IReadOnlyList<int> AntennaIds,
+    int StrongestRssi);
+
+public sealed record ScanSessionItemsPage(
+    string SessionId,
+    int Generation,
+    long RawReadCount,
+    int UniqueEpcCount,
+    long LastSequence,
+    IReadOnlyList<ScanSessionItem> Items,
+    string? NextAfterEpc);
